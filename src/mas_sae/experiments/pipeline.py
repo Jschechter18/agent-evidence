@@ -4,7 +4,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any
 
 from mas_sae.activations.capture import MultiSiteCapture
-from mas_sae.agents.critic import Critic, CriticCondition, CriticBlindAnswerError
+from mas_sae.agents.critic import Critic, CriticCondition
 from mas_sae.agents.solver import Solver
 from mas_sae.agents.validator import Validator
 from mas_sae.evaluation.scoring import (
@@ -21,13 +21,18 @@ from mas_sae.experiments.conditions import OMITTED, resolve_conditions
 from mas_sae.evaluation.behavior import classify_behavior
 
 
-def choose_incorrect_answer(
+def choose_heuristic_incorrect_answer(
     *,
     paragraphs: list[dict[str, Any]],
     gold: str,
     aliases: Iterable[str] = (),
 ) -> str:
-    """Choose a deterministic wrong answer for controlled feedback."""
+    """Paragraph-title heuristic for the controlled-incorrect target.
+
+    This is the original (V1) target path, used when ``type_checked_target``
+    is off. It is not a fallback for the type-checked generator, which
+    raises ``ControlledTargetError`` instead of degrading to this.
+    """
 
     aliases = tuple(aliases)
 
@@ -216,12 +221,7 @@ def run_question(
     controlled_target: ControlledTarget | None = None
 
     if critic.blind_then_compare and CriticCondition.NATURAL in conditions:
-        try:
-            blind_answer = critic.answer_blind(question, paragraphs)
-        except CriticBlindAnswerError as error:
-            error.collection_context = {"stage": "critic_blind", "a1_exists": True,
-                                        "critic_exists": True, "a2_exists": False}
-            raise
+        blind_answer = critic.answer_blind(question, paragraphs)
         blind_telemetry = getattr(critic, "last_generation", None)
         blind_raw_output = critic.last_blind_raw_output
 
@@ -238,7 +238,7 @@ def run_question(
         )
         incorrect_answer = controlled_target.answer
     elif CriticCondition.CONTROLLED_INCORRECT in conditions:
-        incorrect_answer = choose_incorrect_answer(
+        incorrect_answer = choose_heuristic_incorrect_answer(
             paragraphs=paragraphs,
             gold=gold,
             aliases=aliases,

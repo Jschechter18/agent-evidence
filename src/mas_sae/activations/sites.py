@@ -2,7 +2,11 @@
 from typing import Any
 
 
-_LAYER_PATHS = {
+# Model-family architecture adapters. These module paths describe where
+# supported Hugging Face architectures expose transformer blocks; they are
+# not experiment/run-specific configuration. resolve_solver_sites validates
+# each resolved path against the loaded model before generation.
+_SUPPORTED_SOLVER_LAYER_PATHS = {
     "gemma3": ("gemma3", "model.language_model.layers"),
     "qwen3": ("qwen3", "model.layers"),
 }
@@ -14,9 +18,9 @@ def resolve_solver_sites(model: Any, loader: str, layers: list[int]) -> list[str
     The caller supplies the Solver model, never a Critic or Validator. This
     validates names only; hooks are installed by the Solver generation pipeline.
     """
-    if loader not in _LAYER_PATHS:
+    if loader not in _SUPPORTED_SOLVER_LAYER_PATHS:
         raise ValueError(f"Unsupported Solver loader: {loader!r}")
-    expected_type, prefix = _LAYER_PATHS[loader]
+    expected_type, prefix = _SUPPORTED_SOLVER_LAYER_PATHS[loader]
     actual_type = getattr(getattr(model, "config", None), "model_type", None)
     if actual_type != expected_type:
         raise ValueError(

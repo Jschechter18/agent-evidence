@@ -1,13 +1,13 @@
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 import torch
 import yaml
 
 from mas_sae.data.activation_store import ActivationStore
-from mas_sae.experiments import artifacts, collection_artifacts
+from mas_sae.evaluation.behavior import classify_behavior
+from mas_sae.experiments import collection_artifacts
 from mas_sae.experiments.collection_artifacts import (
     save_collection_artifacts,
 )
@@ -99,55 +99,6 @@ def test_save_collection_artifacts(tmp_path: Path) -> None:
     assert summary["rejected"] == 2
     assert summary["unlabeled_noncommittal"] == 2
 
-
-
-def test_build_resolved_config_adds_provenance(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        artifacts,
-        "get_git_commit",
-        lambda: "abc123",
-    )
-    monkeypatch.setattr(
-        artifacts,
-        "get_package_version",
-        lambda package: f"{package}-version",
-    )
-
-    config = {
-        "model": {"id": "google/gemma-3-4b-it"},
-        "dataset": {"source_split": "train", "num_questions": 2},
-        "collection": {"layers": [8, 17], "seed": 42},
-        "output": {"run_name": "test_run"},
-    }
-
-    model = SimpleNamespace(
-        config=SimpleNamespace(_commit_hash="model-revision")
-    )
-    solver = SimpleNamespace(max_new_tokens=32)
-    critic = SimpleNamespace(max_new_tokens=128)
-    validator = SimpleNamespace(max_new_tokens=4)
-
-    resolved = collection_artifacts.build_resolved_config(
-        config,
-        model,
-        solver,
-        critic,
-        validator,
-    )
-
-    provenance = resolved["provenance"]
-
-    assert resolved["model"] == config["model"]
-    assert provenance["git_commit"] == "abc123"
-    assert provenance["model_revision"] == "model-revision"
-    assert provenance["dataset_id"] == "dgslibisey/MuSiQue"
-    assert provenance["package_versions"]["torch"] == "torch-version"
-    assert provenance["generation"]["do_sample"] is False
-    assert provenance["generation"]["solver_max_new_tokens"] == 32
-    assert provenance["generation"]["critic_max_new_tokens"] == 128
-    assert provenance["generation"]["validator_max_new_tokens"] == 4
 
 
 def test_save_collection_artifacts_writes_sampled_questions(
@@ -247,108 +198,26 @@ def test_save_collection_artifacts_rejects_manifest_length_mismatch(
         )
 
 
-def _resolve(monkeypatch, critic, **kwargs):
-    monkeypatch.setattr(artifacts, "get_git_commit", lambda: "abc123")
-    monkeypatch.setattr(
-        artifacts, "get_package_version", lambda package: "x"
-    )
-
-    return collection_artifacts.build_resolved_config(
-        {"output": {"run_name": "r"}},
-        SimpleNamespace(config=SimpleNamespace(_commit_hash="rev")),
-        SimpleNamespace(max_new_tokens=32),
-        critic,
-        SimpleNamespace(max_new_tokens=4),
-        **kwargs,
-    )["provenance"]
+def test_integrity_rejects_wrong_indices_before_writes(tmp_path):
+    with pytest.raises(ValueError, match="indices"):
+        save_collection_artifacts(
+            activation_root=tmp_path / "activations", result_root=tmp_path / "results",
+            run_name="bad", source_split="train", candidate_sites=SITES[:1],
+            attempt1_by_site={SITES[0]: [torch.ones(1, 4)]},
+            attempt2_by_site={SITES[0]: [torch.ones(1, 4)]},
+            records=[{"question_id": "q", "attempt1_activation_index": 9, "attempt2_activation_index": 0}],
+            resolved_config={})
+    assert not (tmp_path / "activations").exists()
+    assert not (tmp_path / "results").exists()
 
 
-@pytest.mark.parametrize(
-    (
-        "critic",
-        "type_checked_target",
-        "expected_natural",
-        "expected_controlled",
-    ),
-    [
-        (
-            SimpleNamespace(max_new_tokens=128),
-            False,
-            "NATURAL_PROMPT_V1",
-            "CONTROLLED_PROMPT_V1",
-        ),
-        (
-            SimpleNamespace(
-                max_new_tokens=128,
-                blind_then_compare=False,
-                controlled_as_own_conclusion=False,
-            ),
-            False,
-            "NATURAL_PROMPT_V1",
-            "CONTROLLED_PROMPT_V1",
-        ),
-        (
-            SimpleNamespace(
-                max_new_tokens=128,
-                blind_then_compare=True,
-                controlled_as_own_conclusion=True,
-            ),
-            True,
-            "NATURAL_BLIND_PROMPT+NATURAL_COMPARE_PROMPT",
-            "CONTROLLED_OWN_CONCLUSION_PROMPT",
-        ),
-        (
-            SimpleNamespace(
-                max_new_tokens=128,
-                blind_then_compare=True,
-                controlled_as_own_conclusion=False,
-            ),
-            False,
-            "NATURAL_BLIND_PROMPT+NATURAL_COMPARE_PROMPT",
-            "CONTROLLED_PROMPT_V1",
-        ),
-    ],
-    ids=["no-attributes", "all-off", "all-on", "blind-only"],
-)
-def test_build_resolved_config_records_actual_capabilities(
-    monkeypatch,
-    critic,
-    type_checked_target,
-    expected_natural,
-    expected_controlled,
-) -> None:
-    provenance = _resolve(
-        monkeypatch, critic, type_checked_target=type_checked_target
-    )
-    prompts = provenance["prompt_versions"]
-
-    assert provenance["capabilities"] == {
-        "blind_then_compare": getattr(critic, "blind_then_compare", False),
-        "controlled_as_own_conclusion": getattr(
-            critic, "controlled_as_own_conclusion", False
-        ),
-        "type_checked_target": type_checked_target,
-    }
-    assert prompts["critic_natural"] == expected_natural
-    assert prompts["critic_controlled"] == expected_controlled
-    assert prompts["solver_solve"] == "SOLVE_PROMPT_V1"
-    assert ("critic_distractor" in prompts) == type_checked_target
-
-
-def test_build_resolved_config_echoes_protocol_label_without_branching(
-    monkeypatch,
-) -> None:
-    critic = SimpleNamespace(max_new_tokens=128)
-
-    # the label is recorded as given and does not change the behaviour
-    # actually recorded
-    labelled = _resolve(monkeypatch, critic, protocol_version="v9")
-    assert labelled["protocol_version"] == "v9"
-    assert labelled["capabilities"]["blind_then_compare"] is False
-    assert labelled["prompt_versions"]["critic_natural"] == "NATURAL_PROMPT_V1"
-
-    # no label supplied: no label key, everything else unchanged
-    unlabelled = _resolve(monkeypatch, critic)
-    assert "protocol_version" not in unlabelled
-    assert unlabelled["capabilities"] == labelled["capabilities"]
-    assert unlabelled["prompt_versions"] == labelled["prompt_versions"]
+def test_production_summary_does_not_turn_invalid_feedback_into_rejection():
+    row = {"solver_accepted_feedback": False,
+           **classify_behavior("Paris", "Paris", "London", usable=False)}
+    summary = collection_artifacts.behavioral_summary([row], production=True)
+    assert summary["solver_behavior_counts"] == {"ambiguous": 1}
+    assert summary["critic_position_counts"] == {"ambiguous_or_unresolved": 1}
+    assert "rejected" not in summary
+    assert summary["legacy_acceptance_counts"]["rejected"] == 1
+    assert row["direct_critic_adoption"] is None
+    assert collection_artifacts.behavioral_summary([row], production=False)["rejected"] == 1

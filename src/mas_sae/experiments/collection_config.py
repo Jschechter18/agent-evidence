@@ -10,6 +10,8 @@ from mas_sae.data.musique import (
     validate_experiment_split_proportions,
     validate_proportions,
 )
+from mas_sae.experiments.conditions import OMITTED, resolve_conditions
+from mas_sae.models.roles import resolve_roles
 
 
 SUPPORTED_SAMPLING_STRATEGIES = ("first_n", "random", "stratified")
@@ -102,18 +104,13 @@ def load_collection_config(path: str | Path) -> CollectionConfig:
         if not isinstance(raw[section], dict):
             raise ValueError(f"{section} must be a mapping.")
 
-    from mas_sae.models.roles import resolve_roles
-    from mas_sae.experiments.conditions import OMITTED, resolve_conditions
+    # Validates the legacy ``model`` section or the explicit ``roles``
+    # section (including ``model.id``), and ``active_conditions``.
     resolve_roles(raw)
     resolve_conditions(raw["collection"].get("active_conditions", OMITTED))
-    model = raw.get("model", {"id": "role-configured"})
     dataset = raw["dataset"]
     collection = raw["collection"]
     output = raw["output"]
-
-    model_id = model.get("id")
-    if not isinstance(model_id, str) or not model_id.strip():
-        raise ValueError("model.id must be a non-empty string.")
 
     source_split = dataset.get("source_split")
     if source_split not in SUPPORTED_SOURCE_SPLITS:

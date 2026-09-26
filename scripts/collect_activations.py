@@ -12,11 +12,9 @@ from mas_sae.experiments.collection import (
     collect_examples,
     select_questions,
 )
-from mas_sae.experiments.collection_artifacts import (
-    build_resolved_config,
-    save_collection_artifacts,
-)
+from mas_sae.experiments.collection_artifacts import save_collection_artifacts
 from mas_sae.experiments.collection_config import load_collection_config
+from mas_sae.experiments.provenance import build_resolved_config
 from mas_sae.models.roles import resolve_roles, load_role_models, configure_agent
 from mas_sae.activations.sites import resolve_solver_sites
 from mas_sae.experiments.conditions import OMITTED

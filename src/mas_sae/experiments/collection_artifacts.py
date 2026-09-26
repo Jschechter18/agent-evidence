@@ -1,3 +1,8 @@
+"""Validate and persist one collection run's tensors, records and summary.
+
+Reproducibility metadata is built by ``provenance.build_resolved_config``;
+this module only checks integrity and writes what it is given.
+"""
 from __future__ import annotations
 
 import json
@@ -9,103 +14,9 @@ import torch
 import yaml
 
 from mas_sae.data.activation_store import ActivationStore
-from mas_sae.data.musique import MUSIQUE_DATASET_ID
-from mas_sae.experiments import artifacts
 from mas_sae.experiments.collection import stack_site_activations
 from mas_sae.experiments.records import write_jsonl
-from mas_sae.experiments.provenance import role_metadata, environment_metadata
 from mas_sae.experiments.conditions import OMITTED, resolve_conditions
-
-
-def _critic_prompt_names(
-    critic: Any,
-    type_checked_target: bool,
-) -> dict[str, str]:
-    """Names of the critic prompts a run actually used, by capability."""
-    names = {
-        "critic_natural": (
-            "NATURAL_BLIND_PROMPT+NATURAL_COMPARE_PROMPT"
-            if getattr(critic, "blind_then_compare", False)
-            else "NATURAL_PROMPT_V1"
-        ),
-        "critic_controlled": (
-            "CONTROLLED_OWN_CONCLUSION_PROMPT"
-            if getattr(critic, "controlled_as_own_conclusion", False)
-            else "CONTROLLED_PROMPT_V1"
-        ),
-    }
-
-    if type_checked_target:
-        names["critic_distractor"] = "DISTRACTOR_PROMPT"
-
-    return names
-
-
-def build_resolved_config(
-    config: dict[str, Any],
-    model: Any,
-    solver: Any,
-    critic: Any,
-    validator: Any,
-    *,
-    protocol_version: str | None = None,
-    type_checked_target: bool = False,
-) -> dict[str, Any]:
-    """Add minimal reproducibility provenance to the run config.
-
-    ``protocol_version`` is the caller's opaque run label, recorded as
-    given when supplied. The prompt names and ``capabilities`` block are
-    derived from the critic's capability flags and ``type_checked_target``,
-    so a run records the behaviour that actually produced its feedback.
-    """
-    capabilities = {
-        "blind_then_compare": bool(
-            getattr(critic, "blind_then_compare", False)
-        ),
-        "controlled_as_own_conclusion": bool(
-            getattr(critic, "controlled_as_own_conclusion", False)
-        ),
-        "type_checked_target": bool(type_checked_target),
-    }
-    label = (
-        {} if protocol_version is None
-        else {"protocol_version": protocol_version}
-    )
-
-    return {
-        **config,
-        "provenance": {
-            "created_at_utc": artifacts.utc_now().isoformat(),
-            "git_commit": artifacts.get_git_commit(),
-            "model_revision": (
-                getattr(model.config, "_commit_hash", None) or "unknown"
-            ),
-            "dataset_id": MUSIQUE_DATASET_ID,
-            "roles": {name: role_metadata(agent) for name, agent in
-                      (("solver", solver), ("critic", critic), ("validator", validator))},
-            "environment": environment_metadata(),
-            "active_conditions": [c.value for c in resolve_conditions(config.get("collection", {}).get("active_conditions", OMITTED))],
-            "package_versions": {
-                "torch": artifacts.get_package_version("torch"),
-                "transformers": artifacts.get_package_version("transformers"),
-                "datasets": artifacts.get_package_version("datasets"),
-            },
-            **label,
-            "capabilities": capabilities,
-            "prompt_versions": {
-                "solver_solve": "SOLVE_PROMPT_V1",
-                "solver_revise": "REVISE_PROMPT_V1",
-                **_critic_prompt_names(critic, type_checked_target),
-                "validator": "VALIDATE_PROMPT",
-            },
-            "generation": {
-                "do_sample": (False if "roles" not in config else None),
-                "solver_max_new_tokens": solver.max_new_tokens,
-                "critic_max_new_tokens": critic.max_new_tokens,
-                "validator_max_new_tokens": validator.max_new_tokens,
-            },
-        },
-    }
 
 
 def behavioral_summary(records: list[dict[str, Any]], *, production: bool) -> dict[str, Any]:
@@ -179,6 +90,61 @@ def _count_by_key(
     return dict(sorted(Counter(str(entry[key]) for entry in entries).items()))
 
 
+def _validate_alignment(
+    *,
+    candidate_sites: list[str],
+    attempt1: dict[str, torch.Tensor],
+    attempt2: dict[str, torch.Tensor],
+    records: list[dict[str, Any]],
+    successful_ids: list[str],
+    resolved_config: dict[str, Any],
+) -> tuple[int, int]:
+    """Check records, tensors and active conditions agree; return row counts."""
+    expected_sites = set(candidate_sites)
+
+    if set(attempt1) != expected_sites:
+        raise ValueError(
+            "Attempt 1 activation sites do not match candidate sites."
+        )
+    if set(attempt2) != expected_sites:
+        raise ValueError(
+            "Attempt 2 activation sites do not match candidate sites."
+        )
+
+    first_site = candidate_sites[0]
+    n1, n2 = attempt1[first_site].shape[0], attempt2[first_site].shape[0]
+    if len(successful_ids) != n1 or len(records) != n2:
+        raise ValueError("Record/question counts do not align with activation rows")
+    id_to_index = {qid: i for i, qid in enumerate(successful_ids)}
+    for i, row in enumerate(records):
+        if (
+            row["attempt1_activation_index"] != id_to_index[row["question_id"]]
+            or row["attempt2_activation_index"] != i
+        ):
+            raise ValueError("Record activation indices do not align")
+    active = resolved_config.get("collection", {}).get("active_conditions", OMITTED)
+    if active is not OMITTED:
+        expected = {c.value for c in resolve_conditions(active)}
+        for qid in successful_ids:
+            conditions = [row["critic_condition"] for row in records if row["question_id"] == qid]
+            if len(conditions) != len(expected) or set(conditions) != expected:
+                raise ValueError("Episode conditions do not match active_conditions")
+        episode_ids = [row.get("episode_id") for row in records]
+        if None in episode_ids or len(set(episode_ids)) != len(episode_ids):
+            raise ValueError("Episode IDs must be present and unique")
+    for site in candidate_sites:
+        a1, a2 = attempt1[site], attempt2[site]
+        if (
+            a1.ndim != 2
+            or a2.ndim != 2
+            or a1.shape[0] != n1
+            or a2.shape[0] != n2
+            or a1.shape[1] != a2.shape[1]
+        ):
+            raise ValueError("Activation shapes do not align across sites")
+    return n1, n2
+
+
 def save_collection_artifacts(
     *,
     activation_root: str | Path,
@@ -199,8 +165,15 @@ def save_collection_artifacts(
     ``describe_sampled_questions``), it is written to
     ``sampled_questions.json`` so the exact question set can be reproduced,
     and the summary gains question-level hop-group and experiment-split
-    counts. Callers that pass nothing get the original outputs unchanged.
+    counts. When ``exclusions`` is given, ``exclusions.jsonl`` and
+    ``collected_question_ids.json`` are written as well, and a run whose
+    every question was excluded writes metadata but no tensors. Callers
+    that pass neither get the original outputs unchanged.
+
+    Every integrity check runs before anything is written.
     """
+    if not candidate_sites:
+        raise ValueError("candidate_sites must not be empty.")
     production = "active_conditions" in resolved_config.get("collection", {})
     successful_ids = list(dict.fromkeys(row["question_id"] for row in records))
     excluded_ids = [row["question_id"] for row in (exclusions or [])]
@@ -212,84 +185,37 @@ def save_collection_artifacts(
         if len(set(requested_ids)) != len(requested_ids) or set(requested_ids) != set(successful_ids) | set(excluded_ids):
             raise ValueError("Requested manifest must match successful plus excluded IDs")
         collected_manifest = [row for row in sampled_questions if row["question_id"] in successful_ids]
+
     if not records and exclusions:
         if any(attempt1_by_site.values()) or any(attempt2_by_site.values()):
             raise ValueError("Failed-only collection must not contain activation rows")
-        output_dir = Path(result_root) / run_name / source_split
-        output_dir.mkdir(parents=True, exist_ok=True)
-        write_jsonl(output_dir / "exclusions.jsonl", exclusions)
-        write_jsonl(output_dir / "interactions.jsonl", [])
-        (output_dir / "resolved_config.yaml").write_text(yaml.safe_dump(resolved_config, sort_keys=False))
-        if sampled_questions is not None:
-            (output_dir / "sampled_questions.json").write_text(json.dumps(sampled_questions, indent=2))
-        (output_dir / "collected_question_ids.json").write_text("[]\n")
-        summary = {"run_name": run_name, "source_split": source_split,
-                   "num_questions": 0, "num_episodes": 0,
-                   "num_excluded": len(exclusions), "site_shapes": {},
-                   "sae_rows_per_layer": 0,
-                   **behavioral_summary([], production=production)}
-        (output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
-        return summary
-    attempt1 = stack_site_activations(attempt1_by_site)
-    attempt2 = stack_site_activations(attempt2_by_site)
-    expected_sites = set(candidate_sites)
-
-    if set(attempt1) != expected_sites:
-        raise ValueError(
-            "Attempt 1 activation sites do not match candidate sites."
-        )
-    if set(attempt2) != expected_sites:
-        raise ValueError(
-            "Attempt 2 activation sites do not match candidate sites."
+        attempt1 = attempt2 = {}
+        num_attempt1 = num_attempt2 = 0
+    else:
+        attempt1 = stack_site_activations(attempt1_by_site)
+        attempt2 = stack_site_activations(attempt2_by_site)
+        num_attempt1, num_attempt2 = _validate_alignment(
+            candidate_sites=candidate_sites,
+            attempt1=attempt1,
+            attempt2=attempt2,
+            records=records,
+            successful_ids=successful_ids,
+            resolved_config=resolved_config,
         )
 
-    first_site = candidate_sites[0]
-    n1, n2 = attempt1[first_site].shape[0], attempt2[first_site].shape[0]
-    if len(successful_ids) != n1 or len(records) != n2:
-        raise ValueError("Record/question counts do not align with activation rows")
-    id_to_index = {qid: i for i, qid in enumerate(successful_ids)}
-    for i, row in enumerate(records):
-        if row["attempt1_activation_index"] != id_to_index[row["question_id"]] or row["attempt2_activation_index"] != i:
-            raise ValueError("Record activation indices do not align")
-    if sampled_questions is not None and len(collected_manifest) != n1:
-        raise ValueError("sampled_questions length does not match collected questions")
-    active = resolved_config.get("collection", {}).get("active_conditions", OMITTED)
-    if active is not OMITTED:
-        expected = {c.value for c in resolve_conditions(active)}
-        for qid in successful_ids:
-            conditions = [row["critic_condition"] for row in records if row["question_id"] == qid]
-            if len(conditions) != len(expected) or set(conditions) != expected:
-                raise ValueError("Episode conditions do not match active_conditions")
-        episode_ids = [row.get("episode_id") for row in records]
-        if None in episode_ids or len(set(episode_ids)) != len(episode_ids):
-            raise ValueError("Episode IDs must be present and unique")
-    for site in candidate_sites:
-        if attempt1[site].ndim != 2 or attempt2[site].ndim != 2 or attempt1[site].shape[0] != n1 or attempt2[site].shape[0] != n2 or attempt1[site].shape[1] != attempt2[site].shape[1]:
-            raise ValueError("Activation shapes do not align across sites")
+    if sampled_questions is not None and len(collected_manifest) != num_attempt1:
+        raise ValueError(
+            "sampled_questions length does not match the number of "
+            f"collected questions ({len(collected_manifest)} vs "
+            f"{num_attempt1})."
+        )
 
     behavior_counts = behavioral_summary(records, production=production)
-    num_attempt1: int | None = None
-    num_attempt2: int | None = None
     site_shapes: dict[str, dict[str, list[int]]] = {}
 
-    for site in candidate_sites:
+    for site in (candidate_sites if records else []):
         attempt1_tensor = attempt1[site]
         attempt2_tensor = attempt2[site]
-
-        if attempt1_tensor.shape[1] != attempt2_tensor.shape[1]:
-            raise ValueError(f"Hidden dimensions do not match for {site!r}.")
-
-        if num_attempt1 is None:
-            num_attempt1 = attempt1_tensor.shape[0]
-            num_attempt2 = attempt2_tensor.shape[0]
-        elif (
-            attempt1_tensor.shape[0] != num_attempt1
-            or attempt2_tensor.shape[0] != num_attempt2
-        ):
-            raise ValueError(
-                "Activation row counts differ across candidate sites."
-            )
-
         sae_tensor = torch.cat([attempt1_tensor, attempt2_tensor], dim=0)
         slug = site_slug(site)
         store = ActivationStore(Path(activation_root) / run_name / slug)
@@ -307,9 +233,6 @@ def save_collection_artifacts(
             "attempt2": list(attempt2_tensor.shape),
             "sae": list(sae_tensor.shape),
         }
-
-    if num_attempt1 is None or num_attempt2 is None:
-        raise ValueError("No activation sites were saved.")
 
     enriched_records = _add_sae_indices(records, num_attempt1)
 
@@ -338,13 +261,6 @@ def save_collection_artifacts(
     }
 
     if sampled_questions is not None:
-        if len(collected_manifest) != num_attempt1:
-            raise ValueError(
-                "sampled_questions length does not match the number of "
-                f"collected questions ({len(sampled_questions)} vs "
-                f"{num_attempt1})."
-            )
-
         with (output_dir / "sampled_questions.json").open(
             "w", encoding="utf-8"
         ) as file:

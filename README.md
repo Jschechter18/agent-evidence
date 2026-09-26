@@ -157,116 +157,66 @@ After activating the Conda environment and installing the project, run:
 pytest
 ```
 
-## Gemma Model Access
+## Model Access
 
-This project uses the Hugging Face model:
+Models used by the Solver-Critic pipeline (all from Hugging Face):
 
-`google/gemma-3-4b-it`
+- **Baseline / current Solver (all checked-in runnable configs):**
+  `google/gemma-3-4b-it`, revision `093f9f388b31de276ce2de164bdc2081324b9767`
+  (the validated snapshot recovered during the team's provenance review).
+- **Cross-model Natural Critic used in protocol validation:**
+  `Qwen/Qwen3-4B-Instruct-2507`, revision `cdbee75f17c01a7cc42f958dc650907174af0554`.
+- **Final production roles (`configs/collection/v2/natural_production.yaml`):**
+  intentionally `null` until the larger-model validation is complete. No
+  larger model has been selected in this repository yet.
 
-Because Gemma is a gated model, each team member must request/accept access on Hugging Face before running the Solver-Critic pipeline.
+Setup (once per machine):
 
-### 1. Create or log in to Hugging Face
+1. Create or log in to a Hugging Face account: https://huggingface.co/
+2. Accept the Gemma license at https://huggingface.co/google/gemma-3-4b-it
+   (Gemma is gated; Qwen is not).
+3. Create a **read** token at https://huggingface.co/settings/tokens.
+   Never commit or share the token.
+4. In the `capstone` environment run `hf auth login` and paste the token,
+   then confirm with `hf auth whoami`.
+5. Weights download on first use and are cached under `checkpoints/huggingface/`.
 
-Go to:
+Rules so runs stay comparable across machines:
 
-https://huggingface.co/
-
-### 2. Request/accept access to Gemma
-
-Open:
-
-https://huggingface.co/google/gemma-3-4b-it
-
-Accept the Gemma license/access requirements shown on the model page.
-
-### 3. Create a Hugging Face access token
-
-Go to:
-
-https://huggingface.co/settings/tokens
-
-Create a token with read access.
-
-Do not commit or share your Hugging Face token.
-
-### 4. Authenticate on the machine running the project
-
-Activate the project environment:
-
-```bash
-conda activate capstone
-```
-
-Then log in to Hugging Face:
-
-```
-hf auth login
-```
-
-Paste your Hugging Face token when prompted.
-
-Verify that authentication worked:
-
-```
-hf auth whoami
-```
-
-### 5. Run the project
-
-Once Gemma access and authentication are complete, the model will download automatically when the project calls load_gemma().
-
-The model is cached under:
-
-checkpoints/huggingface/
-
+- Put the exact model `id` **and** `revision` in the experiment config
+  (`roles.solver`, `roles.critic`, `roles.validator`); the legacy `model.id`
+  form is still accepted for V1 configs.
+- Do not silently substitute a newer `main` revision; a run's
+  `resolved_config.yaml` records the resolved revision of every role.
+- Explicit `dtype` and `device`/`device_map` are required; there is no
+  automatic quantization, dtype fallback, or placement change.
 
 ## Collection condition policy
 
-Natural, Controlled Correct, and Controlled Incorrect remain supported.
-The main scaled experiment activates **Natural only**. The controlled conditions
-remain implemented and tested, but inactive in the production configuration.
-`collection.active_conditions` accepts a nonempty list of `natural`,
-`controlled_correct`, and `controlled_incorrect`. Omitting it preserves V1's
-three-condition behavior. Explicit null and empty lists are errors. Disabled
-controls generate no targets or episodes.
-V2 Natural answers independently before reviewing Solver A1, without gold labels
-or a requirement to retain its initial position. Only Solver activations are captured.
-
-`configs/collection/v2/natural_production.yaml` records the condition policy but
-intentionally fails validation until model identities, revisions, precision,
-placement, layers, and dataset scope are approved. Token budgets are provisional.
-Larger-model confirmation is required; final larger-model identities and whether
-that Solver is the final mechanistic target remain unresolved.
-
-Explicit `roles.solver`, `roles.critic`, and `roles.validator` replace the legacy
-`model` section. Each specifies `id`, `revision`, `loader` (`gemma3` or `qwen3`),
-`dtype`, `device` or `device_map`, and `generation`. Identical loading specifications
-share weights; different role specifications load independently. There is no
-automatic quantization, dtype fallback, or placement change. Solver activation
-modules are resolved and checked for Gemma3/Qwen3 before any generation.
-
-New explicit-condition runs add `behavior_schema_version: lexical_v2` and preserve
-all historical labels. `critic_textual_relation` records exact/containment/different
-or unresolved text relationships. `critic_position_relation` distinguishes same
-position, different nonrefusal candidate, refusal/nonanswer, and unresolved output.
-These are conservative lexical heuristics, not validated semantic judgments;
-unrecognized paraphrases and refusals require review before scientific use.
-`solver_behavior` distinguishes no conflict, retained A1, adopted Critic, third
-answer, and ambiguity. `direct_critic_adoption` is null outside resolved conflict.
-The legacy `solver_accepted_feedback` is not direct adoption of competing feedback.
-Production summaries use `solver_behavior_counts` and `critic_position_counts`;
-old acceptance counts are isolated under `legacy_acceptance_counts`. Lexical
-adoption means matching an answer-like candidate, not proven semantic uptake.
-Recognized refusal copying is recorded separately as `solver_copied_nonanswer`.
-Natural records preserve `critic_blind_raw_output` alongside the parsed blind
-answer and existing final review text so later parsers can revisit both steps.
-
-Generation telemetry records token counts and whether the configured budget was
-reached; no definitive truncation/finish reason is inferred. Expected blind/target
-failures are written to `exclusions.jsonl`; the requested sample manifest is
-preserved separately from successful question IDs and activation row indices.
-
-Full-run checkpoint/resume is deferred. The minimum design is an atomic per-question
-checkpoint containing its records, Solver tensors, or exclusion, tied to the run
-SHA/config and ordered sample manifest. Resume must validate these identities and
-rebuild indices from completed checkpoints before collecting remaining questions.
+- Natural, Controlled Correct (B) and Controlled Incorrect (C) remain
+  supported; `collection.active_conditions` selects a nonempty subset.
+  Omitting it keeps V1's three-condition behaviour; `null` or `[]` is an error.
+- The current production policy activates **Natural only**. B and C stay
+  implemented and tested but inactive; disabled conditions generate no
+  targets and no episodes.
+- Natural is blind-first: the Critic answers independently, then reviews
+  Solver A1. It never sees gold answers or aliases.
+- Solver A1 is generated once per question and reused by every enabled condition.
+- Only Solver activations are captured; Critic and Validator activations never are.
+- Solver, Critic and Validator are independent role specs; identical specs
+  share weights, different specs load separately.
+- Raw Critic outputs are kept (`critic_blind_raw_output`, `critic_raw_output`)
+  so both steps can be re-parsed later.
+- Behaviour labels (`behavior_schema_version: lexical_v2`) are conservative
+  lexical heuristics, not semantic judgments: `critic_position_relation`,
+  `solver_behavior`, `direct_critic_adoption`, `solver_copied_nonanswer`.
+  Refusals, malformed output and unresolved cases are never counted as
+  rejection, and a lexical difference is not proven disagreement. Legacy
+  `solver_accepted_feedback` counts are reported separately under
+  `legacy_acceptance_counts`.
+- Questions whose blind answer or controlled target cannot be constructed are
+  skipped and written to `exclusions.jsonl`; `collected_question_ids.json`
+  lists the questions that produced activation rows.
+- Generation telemetry records token counts and whether the budget was reached.
+- Still unresolved for production: final role models and revisions, layers,
+  dataset scope, and token budgets. Full-run checkpoint/resume is deferred.

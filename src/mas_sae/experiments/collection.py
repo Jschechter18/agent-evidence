@@ -222,19 +222,24 @@ def collect_examples(
                 seed=seed,
                 decomposition=example.get("question_decomposition") or [],
                 type_checked_target=type_checked_target,
-                **({"active_conditions": active_conditions} if active_conditions is not OMITTED else {}),
+                active_conditions=active_conditions,
             )
         except (CriticBlindAnswerError, ControlledTargetError) as error:
             logger.warning(
                 "Skipping question %s: %s", example["id"], error
             )
+            # A1 always exists here (it is generated first). The blind step
+            # produced (unusable) critic output; whether the target step
+            # called the critic is not known at this level.
+            blind_failure = isinstance(error, CriticBlindAnswerError)
             exclusions.append({
                 "question_id": str(example["id"]),
                 "question_index": question_index, "seed": seed,
-                "stage": "controlled_target" if isinstance(error, ControlledTargetError) else "critic_blind",
+                "stage": "critic_blind" if blind_failure else "controlled_target",
                 "error_type": type(error).__name__, "reason": str(error),
-                "a1_exists": True, "critic_exists": None, "a2_exists": False,
-                **getattr(error, "collection_context", {}),
+                "a1_exists": True,
+                "critic_exists": True if blind_failure else None,
+                "a2_exists": False,
             })
             continue
 
