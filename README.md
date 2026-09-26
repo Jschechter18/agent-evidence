@@ -2,6 +2,15 @@
 
 Master's Data Science Capstone project.
 
+## Messages for Professor/AI Reviewer:
+
+# Instructor Review 1 Response:
+
+- src contains a module that we are using to create reusable code. We are doing so and using scripts to actually run our pipeline
+- we will have shell scripts that run separately in src/shellscripts
+- Scripts is used to actually run our code. We package up whatever we can make reusable in the module, and call it in individual scripts files. Think of scripts as something as a frontend for our module. (we obviously can make a real UI later for demo purposes if necessary)
+-
+
 ## Getting Started
 
 ### 1. Clone the Repository
@@ -137,8 +146,9 @@ Activation tensors are saved under:
     data/activations/<run_name>/layer_<N>/
 
 Each source split produces:
-- <split>_attempt1.pt
-- <split>_attempt2.pt
+
+- <split>\_attempt1.pt
+- <split>\_attempt2.pt
 - <split>.pt
 
 <split>.pt is the SAE-facing tensor with Attempt 1 rows followed by Attempt 2 rows.
