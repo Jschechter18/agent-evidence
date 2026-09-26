@@ -1,0 +1,68 @@
+{
+  "run_name": "scale_smoke_1q",
+  "source_split": "train",
+  "num_questions": 1,
+  "num_episodes": 3,
+  "sae_rows_per_layer": 4,
+  "accepted": 2,
+  "rejected": 1,
+  "unlabeled_noncommittal": 0,
+  "site_shapes": {
+    "layer_08": {
+      "attempt1": [
+        1,
+        2560
+      ],
+      "attempt2": [
+        3,
+        2560
+      ],
+      "sae": [
+        4,
+        2560
+      ]
+    },
+    "layer_17": {
+      "attempt1": [
+        1,
+        2560
+      ],
+      "attempt2": [
+        3,
+        2560
+      ],
+      "sae": [
+        4,
+        2560
+      ]
+    },
+    "layer_25": {
+      "attempt1": [
+        1,
+        2560
+      ],
+      "attempt2": [
+        3,
+        2560
+      ],
+      "sae": [
+        4,
+        2560
+      ]
+    },
+    "layer_33": {
+      "attempt1": [
+        1,
+        2560
+      ],
+      "attempt2": [
+        3,
+        2560
+      ],
+      "sae": [
+        4,
+        2560
+      ]
+    }
+  }
+}
