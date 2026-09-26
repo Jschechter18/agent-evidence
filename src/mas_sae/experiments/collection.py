@@ -17,6 +17,7 @@ from mas_sae.data.musique import (
 )
 from mas_sae.experiments.controlled_targets import ControlledTargetError
 from mas_sae.experiments.pipeline import run_question
+from mas_sae.experiments.conditions import OMITTED, resolve_conditions
 
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ class CollectionResult(TypedDict):
     """Activation rows and metadata produced by one collection run."""
 
     records: list[dict[str, Any]]
+    exclusions: list[dict[str, Any]]
     attempt1_by_site: dict[str, list[torch.Tensor]]
     attempt2_by_site: dict[str, list[torch.Tensor]]
 
@@ -111,6 +113,7 @@ def collect_examples(
     base_seed: int,
     experiment_splits: dict[str, str] | None = None,
     type_checked_target: bool = False,
+    active_conditions=OMITTED,
 ) -> CollectionResult:
     """Collect paired Solver-Critic episodes and activation-row mappings.
 
@@ -168,6 +171,7 @@ def collect_examples(
         If no examples or no candidate activation sites are provided, or if
         ``experiment_splits`` is given but lacks one of the question ids.
     """
+    resolve_conditions(active_conditions)
     if not examples:
         raise ValueError("examples must not be empty.")
     if not candidate_sites:
@@ -192,6 +196,7 @@ def collect_examples(
         site: [] for site in candidate_sites
     }
     records: list[dict[str, Any]] = []
+    exclusions: list[dict[str, Any]] = []
 
     for question_index, example in enumerate(examples):
         seed = base_seed + question_index
@@ -217,11 +222,20 @@ def collect_examples(
                 seed=seed,
                 decomposition=example.get("question_decomposition") or [],
                 type_checked_target=type_checked_target,
+                **({"active_conditions": active_conditions} if active_conditions is not OMITTED else {}),
             )
         except (CriticBlindAnswerError, ControlledTargetError) as error:
             logger.warning(
                 "Skipping question %s: %s", example["id"], error
             )
+            exclusions.append({
+                "question_id": str(example["id"]),
+                "question_index": question_index, "seed": seed,
+                "stage": "controlled_target" if isinstance(error, ControlledTargetError) else "critic_blind",
+                "error_type": type(error).__name__, "reason": str(error),
+                "a1_exists": True, "critic_exists": None, "a2_exists": False,
+                **getattr(error, "collection_context", {}),
+            })
             continue
 
         attempt1_index = len(attempt1_by_site[candidate_sites[0]])
@@ -249,6 +263,7 @@ def collect_examples(
 
     return {
         "records": records,
+        "exclusions": exclusions,
         "attempt1_by_site": attempt1_by_site,
         "attempt2_by_site": attempt2_by_site,
     }

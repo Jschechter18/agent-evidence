@@ -13,6 +13,8 @@ from mas_sae.data.musique import MUSIQUE_DATASET_ID
 from mas_sae.experiments import artifacts
 from mas_sae.experiments.collection import stack_site_activations
 from mas_sae.experiments.records import write_jsonl
+from mas_sae.experiments.provenance import role_metadata, environment_metadata
+from mas_sae.experiments.conditions import OMITTED, resolve_conditions
 
 
 def _critic_prompt_names(
@@ -79,6 +81,10 @@ def build_resolved_config(
                 getattr(model.config, "_commit_hash", None) or "unknown"
             ),
             "dataset_id": MUSIQUE_DATASET_ID,
+            "roles": {name: role_metadata(agent) for name, agent in
+                      (("solver", solver), ("critic", critic), ("validator", validator))},
+            "environment": environment_metadata(),
+            "active_conditions": [c.value for c in resolve_conditions(config.get("collection", {}).get("active_conditions", OMITTED))],
             "package_versions": {
                 "torch": artifacts.get_package_version("torch"),
                 "transformers": artifacts.get_package_version("transformers"),
@@ -93,12 +99,30 @@ def build_resolved_config(
                 "validator": "VALIDATE_PROMPT",
             },
             "generation": {
-                "do_sample": False,
+                "do_sample": (False if "roles" not in config else None),
                 "solver_max_new_tokens": solver.max_new_tokens,
                 "critic_max_new_tokens": critic.max_new_tokens,
                 "validator_max_new_tokens": validator.max_new_tokens,
             },
         },
+    }
+
+
+def behavioral_summary(records: list[dict[str, Any]], *, production: bool) -> dict[str, Any]:
+    """Keep legacy acceptance counts separate from lexical production outcomes."""
+    legacy = {
+        "accepted": sum(row["solver_accepted_feedback"] is True for row in records),
+        "rejected": sum(row["solver_accepted_feedback"] is False for row in records),
+        "unlabeled_noncommittal": sum(row["solver_accepted_feedback"] is None for row in records),
+    }
+    if not production:
+        return legacy
+    return {
+        "behavior_schema_versions": sorted({row["behavior_schema_version"] for row in records}),
+        "behavior_matching_basis": "normalized_text_not_semantic",
+        "solver_behavior_counts": _count_by_key(records, "solver_behavior"),
+        "critic_position_counts": _count_by_key(records, "critic_position_relation"),
+        "legacy_acceptance_counts": legacy,
     }
 
 
@@ -167,6 +191,7 @@ def save_collection_artifacts(
     records: list[dict[str, Any]],
     resolved_config: dict[str, Any],
     sampled_questions: list[dict[str, Any]] | None = None,
+    exclusions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Save activation tensors, metadata, resolved config, and summary.
 
@@ -176,6 +201,35 @@ def save_collection_artifacts(
     and the summary gains question-level hop-group and experiment-split
     counts. Callers that pass nothing get the original outputs unchanged.
     """
+    production = "active_conditions" in resolved_config.get("collection", {})
+    successful_ids = list(dict.fromkeys(row["question_id"] for row in records))
+    excluded_ids = [row["question_id"] for row in (exclusions or [])]
+    if len(set(excluded_ids)) != len(excluded_ids) or set(successful_ids) & set(excluded_ids):
+        raise ValueError("Successful and excluded question IDs must be disjoint and unique")
+    collected_manifest = sampled_questions
+    if sampled_questions is not None and exclusions is not None:
+        requested_ids = [row["question_id"] for row in sampled_questions]
+        if len(set(requested_ids)) != len(requested_ids) or set(requested_ids) != set(successful_ids) | set(excluded_ids):
+            raise ValueError("Requested manifest must match successful plus excluded IDs")
+        collected_manifest = [row for row in sampled_questions if row["question_id"] in successful_ids]
+    if not records and exclusions:
+        if any(attempt1_by_site.values()) or any(attempt2_by_site.values()):
+            raise ValueError("Failed-only collection must not contain activation rows")
+        output_dir = Path(result_root) / run_name / source_split
+        output_dir.mkdir(parents=True, exist_ok=True)
+        write_jsonl(output_dir / "exclusions.jsonl", exclusions)
+        write_jsonl(output_dir / "interactions.jsonl", [])
+        (output_dir / "resolved_config.yaml").write_text(yaml.safe_dump(resolved_config, sort_keys=False))
+        if sampled_questions is not None:
+            (output_dir / "sampled_questions.json").write_text(json.dumps(sampled_questions, indent=2))
+        (output_dir / "collected_question_ids.json").write_text("[]\n")
+        summary = {"run_name": run_name, "source_split": source_split,
+                   "num_questions": 0, "num_episodes": 0,
+                   "num_excluded": len(exclusions), "site_shapes": {},
+                   "sae_rows_per_layer": 0,
+                   **behavioral_summary([], production=production)}
+        (output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+        return summary
     attempt1 = stack_site_activations(attempt1_by_site)
     attempt2 = stack_site_activations(attempt2_by_site)
     expected_sites = set(candidate_sites)
@@ -189,6 +243,31 @@ def save_collection_artifacts(
             "Attempt 2 activation sites do not match candidate sites."
         )
 
+    first_site = candidate_sites[0]
+    n1, n2 = attempt1[first_site].shape[0], attempt2[first_site].shape[0]
+    if len(successful_ids) != n1 or len(records) != n2:
+        raise ValueError("Record/question counts do not align with activation rows")
+    id_to_index = {qid: i for i, qid in enumerate(successful_ids)}
+    for i, row in enumerate(records):
+        if row["attempt1_activation_index"] != id_to_index[row["question_id"]] or row["attempt2_activation_index"] != i:
+            raise ValueError("Record activation indices do not align")
+    if sampled_questions is not None and len(collected_manifest) != n1:
+        raise ValueError("sampled_questions length does not match collected questions")
+    active = resolved_config.get("collection", {}).get("active_conditions", OMITTED)
+    if active is not OMITTED:
+        expected = {c.value for c in resolve_conditions(active)}
+        for qid in successful_ids:
+            conditions = [row["critic_condition"] for row in records if row["question_id"] == qid]
+            if len(conditions) != len(expected) or set(conditions) != expected:
+                raise ValueError("Episode conditions do not match active_conditions")
+        episode_ids = [row.get("episode_id") for row in records]
+        if None in episode_ids or len(set(episode_ids)) != len(episode_ids):
+            raise ValueError("Episode IDs must be present and unique")
+    for site in candidate_sites:
+        if attempt1[site].ndim != 2 or attempt2[site].ndim != 2 or attempt1[site].shape[0] != n1 or attempt2[site].shape[0] != n2 or attempt1[site].shape[1] != attempt2[site].shape[1]:
+            raise ValueError("Activation shapes do not align across sites")
+
+    behavior_counts = behavioral_summary(records, production=production)
     num_attempt1: int | None = None
     num_attempt2: int | None = None
     site_shapes: dict[str, dict[str, list[int]]] = {}
@@ -233,20 +312,14 @@ def save_collection_artifacts(
         raise ValueError("No activation sites were saved.")
 
     enriched_records = _add_sae_indices(records, num_attempt1)
-    accepted = sum(
-        row["solver_accepted_feedback"] is True for row in records
-    )
-    rejected = sum(
-        row["solver_accepted_feedback"] is False for row in records
-    )
-    noncommittal = sum(
-        row["solver_accepted_feedback"] is None for row in records
-    )
 
     output_dir = Path(result_root) / run_name / source_split
     output_dir.mkdir(parents=True, exist_ok=True)
 
     write_jsonl(output_dir / "interactions.jsonl", enriched_records)
+    if exclusions is not None:
+        write_jsonl(output_dir / "exclusions.jsonl", exclusions)
+        (output_dir / "collected_question_ids.json").write_text(json.dumps(successful_ids, indent=2))
 
     with (output_dir / "resolved_config.yaml").open(
         "w", encoding="utf-8"
@@ -258,15 +331,14 @@ def save_collection_artifacts(
         "source_split": source_split,
         "num_questions": num_attempt1,
         "num_episodes": num_attempt2,
+        "num_excluded": len(exclusions or []),
         "sae_rows_per_layer": num_attempt1 + num_attempt2,
-        "accepted": accepted,
-        "rejected": rejected,
-        "unlabeled_noncommittal": noncommittal,
+        **behavior_counts,
         "site_shapes": site_shapes,
     }
 
     if sampled_questions is not None:
-        if len(sampled_questions) != num_attempt1:
+        if len(collected_manifest) != num_attempt1:
             raise ValueError(
                 "sampled_questions length does not match the number of "
                 f"collected questions ({len(sampled_questions)} vs "
@@ -280,12 +352,12 @@ def save_collection_artifacts(
             file.write("\n")
 
         summary["hop_group_counts"] = _count_by_key(
-            sampled_questions, "hop_group"
+            collected_manifest, "hop_group"
         )
 
         if all("experiment_split" in entry for entry in sampled_questions):
             summary["experiment_split_counts"] = _count_by_key(
-                sampled_questions, "experiment_split"
+                collected_manifest, "experiment_split"
             )
 
     with (output_dir / "summary.json").open("w", encoding="utf-8") as file:

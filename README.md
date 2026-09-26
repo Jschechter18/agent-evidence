@@ -218,3 +218,55 @@ Once Gemma access and authentication are complete, the model will download autom
 The model is cached under:
 
 checkpoints/huggingface/
+
+
+## Collection condition policy
+
+Natural, Controlled Correct, and Controlled Incorrect remain supported.
+The main scaled experiment activates **Natural only**. The controlled conditions
+remain implemented and tested, but inactive in the production configuration.
+`collection.active_conditions` accepts a nonempty list of `natural`,
+`controlled_correct`, and `controlled_incorrect`. Omitting it preserves V1's
+three-condition behavior. Explicit null and empty lists are errors. Disabled
+controls generate no targets or episodes.
+V2 Natural answers independently before reviewing Solver A1, without gold labels
+or a requirement to retain its initial position. Only Solver activations are captured.
+
+`configs/collection/v2/natural_production.yaml` records the condition policy but
+intentionally fails validation until model identities, revisions, precision,
+placement, layers, and dataset scope are approved. Token budgets are provisional.
+Larger-model confirmation is required; final larger-model identities and whether
+that Solver is the final mechanistic target remain unresolved.
+
+Explicit `roles.solver`, `roles.critic`, and `roles.validator` replace the legacy
+`model` section. Each specifies `id`, `revision`, `loader` (`gemma3` or `qwen3`),
+`dtype`, `device` or `device_map`, and `generation`. Identical loading specifications
+share weights; different role specifications load independently. There is no
+automatic quantization, dtype fallback, or placement change. Solver activation
+modules are resolved and checked for Gemma3/Qwen3 before any generation.
+
+New explicit-condition runs add `behavior_schema_version: lexical_v2` and preserve
+all historical labels. `critic_textual_relation` records exact/containment/different
+or unresolved text relationships. `critic_position_relation` distinguishes same
+position, different nonrefusal candidate, refusal/nonanswer, and unresolved output.
+These are conservative lexical heuristics, not validated semantic judgments;
+unrecognized paraphrases and refusals require review before scientific use.
+`solver_behavior` distinguishes no conflict, retained A1, adopted Critic, third
+answer, and ambiguity. `direct_critic_adoption` is null outside resolved conflict.
+The legacy `solver_accepted_feedback` is not direct adoption of competing feedback.
+Production summaries use `solver_behavior_counts` and `critic_position_counts`;
+old acceptance counts are isolated under `legacy_acceptance_counts`. Lexical
+adoption means matching an answer-like candidate, not proven semantic uptake.
+Recognized refusal copying is recorded separately as `solver_copied_nonanswer`.
+Natural records preserve `critic_blind_raw_output` alongside the parsed blind
+answer and existing final review text so later parsers can revisit both steps.
+
+Generation telemetry records token counts and whether the configured budget was
+reached; no definitive truncation/finish reason is inferred. Expected blind/target
+failures are written to `exclusions.jsonl`; the requested sample manifest is
+preserved separately from successful question IDs and activation row indices.
+
+Full-run checkpoint/resume is deferred. The minimum design is an atomic per-question
+checkpoint containing its records, Solver tensors, or exclusion, tied to the run
+SHA/config and ordered sample manifest. Resume must validate these identities and
+rebuild indices from completed checkpoints before collecting remaining questions.

@@ -4,7 +4,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any
 
 from mas_sae.activations.capture import MultiSiteCapture
-from mas_sae.agents.critic import Critic, CriticCondition
+from mas_sae.agents.critic import Critic, CriticCondition, CriticBlindAnswerError
 from mas_sae.agents.solver import Solver
 from mas_sae.agents.validator import Validator
 from mas_sae.evaluation.scoring import (
@@ -17,6 +17,8 @@ from mas_sae.experiments.controlled_targets import (
     choose_controlled_incorrect_target,
 )
 from mas_sae.experiments.reproducibility import seed_everything
+from mas_sae.experiments.conditions import OMITTED, resolve_conditions
+from mas_sae.evaluation.behavior import classify_behavior
 
 
 def choose_incorrect_answer(
@@ -150,12 +152,13 @@ def run_question(
     seed: int,
     decomposition: Sequence[dict[str, Any]] = (),
     type_checked_target: bool = False,
+    active_conditions=OMITTED,
 ) -> dict[str, Any]:
     """
     Run one complete paired Solver-Critic experiment.
 
     Solver Attempt 1 is generated exactly once and reused across
-    Natural, Controlled Correct, and Controlled Incorrect feedback.
+    enabled feedback conditions (all three by default for V1).
 
     Two optional capabilities extend the records; with both off the
     original record schema is reproduced exactly.
@@ -175,6 +178,7 @@ def run_question(
     continues with the next one.
     """
 
+    conditions = resolve_conditions(active_conditions)
     aliases = tuple(aliases)
 
     seed_everything(seed)
@@ -193,6 +197,7 @@ def run_question(
         )
 
     attempt1_activations = capture.activations
+    a1_telemetry = getattr(solver, "last_generation", None)
 
     attempt1_correct = answer_matches(
         attempt1,
@@ -205,13 +210,22 @@ def run_question(
     # per question, before any prompt that contains Attempt 1.
     # ---------------------------------------------------------
 
+    blind_telemetry = None
+    blind_raw_output = None
     blind_answer: str | None = None
     controlled_target: ControlledTarget | None = None
 
-    if critic.blind_then_compare:
-        blind_answer = critic.answer_blind(question, paragraphs)
+    if critic.blind_then_compare and CriticCondition.NATURAL in conditions:
+        try:
+            blind_answer = critic.answer_blind(question, paragraphs)
+        except CriticBlindAnswerError as error:
+            error.collection_context = {"stage": "critic_blind", "a1_exists": True,
+                                        "critic_exists": True, "a2_exists": False}
+            raise
+        blind_telemetry = getattr(critic, "last_generation", None)
+        blind_raw_output = critic.last_blind_raw_output
 
-    if type_checked_target:
+    if type_checked_target and CriticCondition.CONTROLLED_INCORRECT in conditions:
         controlled_target = choose_type_checked_incorrect_target(
             question_id=question_id,
             question=question,
@@ -223,7 +237,7 @@ def run_question(
             critic=critic,
         )
         incorrect_answer = controlled_target.answer
-    else:
+    elif CriticCondition.CONTROLLED_INCORRECT in conditions:
         incorrect_answer = choose_incorrect_answer(
             paragraphs=paragraphs,
             gold=gold,
@@ -232,14 +246,8 @@ def run_question(
 
     episodes: list[dict[str, Any]] = []
 
-    conditions = (
-        CriticCondition.NATURAL,
-        CriticCondition.CONTROLLED_CORRECT,
-        CriticCondition.CONTROLLED_INCORRECT,
-    )
-
     # ---------------------------------------------------------
-    # All three conditions branch from SAME Attempt 1.
+    # Enabled conditions branch from SAME Attempt 1.
     # ---------------------------------------------------------
 
     for condition in conditions:
@@ -252,6 +260,7 @@ def run_question(
         else:
             target_answer = incorrect_answer
 
+        telemetry_start = len(getattr(critic, "generation_history", []))
         feedback = critic.critique(
             question=question,
             paragraphs=paragraphs,
@@ -335,8 +344,23 @@ def run_question(
             "seed": seed,
         }
 
+        if active_conditions is not OMITTED:
+            record.update(classify_behavior(
+                attempt1, attempt2, feedback.advocated_answer,
+                usable=not feedback.noncommittal,
+            ))
+            record["generation_telemetry"] = {
+                "critic_review": getattr(critic, "generation_history", [])[telemetry_start:],
+                "solver_a1": a1_telemetry,
+                "solver_a2": getattr(solver, "last_generation", None),
+                "critic_blind": blind_telemetry,
+                "validator": getattr(validator, "last_generation", None),
+            }
+
         if critic.blind_then_compare:
             record["critic_blind_answer"] = feedback.blind_answer
+            if condition is CriticCondition.NATURAL:
+                record["critic_blind_raw_output"] = blind_raw_output
 
         if type_checked_target:
             record.update(

@@ -17,7 +17,9 @@ from mas_sae.experiments.collection_artifacts import (
     save_collection_artifacts,
 )
 from mas_sae.experiments.collection_config import load_collection_config
-from mas_sae.models.loader import load_gemma
+from mas_sae.models.roles import resolve_roles, load_role_models, configure_agent
+from mas_sae.activations.sites import resolve_solver_sites
+from mas_sae.experiments.conditions import OMITTED
 
 
 logger = logging.getLogger(__name__)
@@ -65,7 +67,8 @@ def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
     config = load_collection_config(args.config)
-    model_id = config["model"]["id"]
+    role_specs = resolve_roles(config)
+    model_id = role_specs["solver"]["id"]
     source_split = config["dataset"]["source_split"]
     num_questions = config["dataset"]["num_questions"]
     layers = config["collection"]["layers"]
@@ -83,9 +86,6 @@ def main() -> None:
     protocol = PROTOCOLS[protocol_version]
 
     ensure_output_available(RESULT_ROOT / run_name / source_split)
-    candidate_sites = [
-        f"model.language_model.layers.{layer}" for layer in layers
-    ]
 
     logger.info(
         "Starting run=%s split=%s questions=%d protocol=%s",
@@ -96,15 +96,18 @@ def main() -> None:
     )
     logger.info("Loading model %s", model_id)
 
-    model, processor = load_gemma(model_id=model_id)
+    loaded = load_role_models(role_specs)
+    model, processor = loaded["solver"]
+    candidate_sites = resolve_solver_sites(model, role_specs["solver"]["loader"], layers)
     solver = Solver(model, processor)
     critic = Critic(
-        model,
-        processor,
+        *loaded["critic"],
         blind_then_compare=protocol["blind_then_compare"],
         controlled_as_own_conclusion=protocol["controlled_as_own_conclusion"],
     )
-    validator = Validator(model, processor)
+    validator = Validator(*loaded["validator"])
+    for role, agent in (("solver", solver), ("critic", critic), ("validator", validator)):
+        configure_agent(agent, role_specs[role])
 
     resolved_config = build_resolved_config(
         config,
@@ -135,6 +138,7 @@ def main() -> None:
         candidate_sites=candidate_sites,
         base_seed=seed,
         experiment_splits=selection["experiment_splits"],
+        active_conditions=config["collection"].get("active_conditions", OMITTED),
         type_checked_target=protocol["type_checked_target"],
     )
 
@@ -149,6 +153,7 @@ def main() -> None:
         records=result["records"],
         resolved_config=resolved_config,
         sampled_questions=selection["sampled_questions"],
+        exclusions=result["exclusions"],
     )
 
     logger.info(

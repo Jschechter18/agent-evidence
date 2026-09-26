@@ -241,6 +241,7 @@ class Critic(Agent):
             max_new_tokens=max_new_tokens,
         )
         self.blind_then_compare = blind_then_compare
+        self.last_blind_raw_output: str | None = None
         self.controlled_as_own_conclusion = controlled_as_own_conclusion
 
     def answer_blind(
@@ -254,12 +255,14 @@ class Critic(Agent):
         usable answer, so a run never continues on a compare step that
         lacks the blind answer.
         """
+        self.last_blind_raw_output = None
         prompt = NATURAL_BLIND_PROMPT.format(
             paragraphs=Solver.format_paragraphs(paragraphs),
             question=question,
         )
 
         raw_output = self._generate(prompt)
+        self.last_blind_raw_output = raw_output
         answer = _parse_answer_json(raw_output)
 
         if answer is None:
