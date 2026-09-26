@@ -10,6 +10,8 @@ from mas_sae.data.musique import (
     validate_experiment_split_proportions,
     validate_proportions,
 )
+from mas_sae.experiments.conditions import OMITTED, resolve_conditions
+from mas_sae.models.roles import resolve_roles
 
 
 SUPPORTED_SAMPLING_STRATEGIES = ("first_n", "random", "stratified")
@@ -64,6 +66,7 @@ class CollectionSettings(TypedDict):
     layers: list[int]
     seed: int
     protocol_version: NotRequired[str]
+    active_conditions: NotRequired[list[str]]
 
 
 class OutputConfig(TypedDict):
@@ -71,7 +74,8 @@ class OutputConfig(TypedDict):
 
 
 class CollectionConfig(TypedDict):
-    model: ModelConfig
+    model: NotRequired[ModelConfig]
+    roles: NotRequired[dict[str, Any]]
     dataset: DatasetConfig
     collection: CollectionSettings
     output: OutputConfig
@@ -87,7 +91,8 @@ def load_collection_config(path: str | Path) -> CollectionConfig:
     if not isinstance(raw, dict):
         raise ValueError("Collection config must be a mapping.")
 
-    required_sections = {"model", "dataset", "collection", "output"}
+    required_sections = {"dataset", "collection", "output"}
+    required_sections.add("roles" if "roles" in raw else "model")
     missing = required_sections - raw.keys()
 
     if missing:
@@ -99,14 +104,13 @@ def load_collection_config(path: str | Path) -> CollectionConfig:
         if not isinstance(raw[section], dict):
             raise ValueError(f"{section} must be a mapping.")
 
-    model = raw["model"]
+    # Validates the legacy ``model`` section or the explicit ``roles``
+    # section (including ``model.id``), and ``active_conditions``.
+    resolve_roles(raw)
+    resolve_conditions(raw["collection"].get("active_conditions", OMITTED))
     dataset = raw["dataset"]
     collection = raw["collection"]
     output = raw["output"]
-
-    model_id = model.get("id")
-    if not isinstance(model_id, str) or not model_id.strip():
-        raise ValueError("model.id must be a non-empty string.")
 
     source_split = dataset.get("source_split")
     if source_split not in SUPPORTED_SOURCE_SPLITS:

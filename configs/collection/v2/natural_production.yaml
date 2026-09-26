@@ -1,0 +1,34 @@
+# Frozen condition policy; NOT a runnable or approved model/scope decision.
+# Replace null values only after team confirmation. No implicit 4B/12B choice.
+roles:
+  solver:
+    id: null
+    revision: null
+    loader: null
+    dtype: null
+    device: null
+    generation: {max_new_tokens: 32, do_sample: false}
+  critic:
+    id: null
+    revision: null
+    loader: null
+    dtype: null
+    device: null
+    generation: {max_new_tokens: 256, do_sample: false}
+  validator:
+    id: null
+    revision: null
+    loader: null
+    dtype: null
+    device: null
+    generation: {max_new_tokens: 4, do_sample: false}
+dataset:
+  source_split: null
+  num_questions: null
+collection:
+  protocol_version: v2
+  active_conditions: [natural]
+  layers: []
+  seed: 42
+output:
+  run_name: natural_production

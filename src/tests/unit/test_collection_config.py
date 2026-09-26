@@ -1,10 +1,12 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
 from mas_sae.experiments.collection_config import (
     load_collection_config,
 )
+from mas_sae.experiments.conditions import resolve_conditions
 
 
 def test_load_collection_config(tmp_path: Path) -> None:
@@ -306,3 +308,61 @@ def test_collection_config_v1_has_no_protocol_version() -> None:
     )
 
     assert "protocol_version" not in config["collection"]
+
+
+# Explicit ``collection.active_conditions`` and ``roles`` sections.
+
+
+@pytest.mark.parametrize("value", [[], ["natural", "natural"], ["unknown"], "natural"])
+def test_invalid_conditions(value):
+    with pytest.raises(ValueError):
+        resolve_conditions(value)
+
+
+@pytest.mark.parametrize("value", [None, [], "natural", {}, ["bad"], ["natural", "natural"]])
+def test_explicit_invalid_condition_config_fails(tmp_path, value):
+    config = yaml.safe_load(open("configs/collection/v2/smoke_train.yaml"))
+    config["collection"]["active_conditions"] = value
+    path = tmp_path / "invalid.yaml"
+    path.write_text(yaml.safe_dump(config))
+    with pytest.raises(ValueError):
+        load_collection_config(path)
+    with pytest.raises(ValueError):
+        resolve_conditions(value)
+
+
+@pytest.mark.parametrize("value", [["natural"], ["controlled_correct"], ["controlled_incorrect"]])
+def test_explicit_valid_condition_config(tmp_path, value):
+    config = yaml.safe_load(open("configs/collection/v2/smoke_train.yaml"))
+    config["collection"]["active_conditions"] = value
+    path = tmp_path / "valid.yaml"
+    path.write_text(yaml.safe_dump(config))
+    loaded = load_collection_config(path)
+    assert [c.value for c in resolve_conditions(loaded["collection"]["active_conditions"])] == value
+
+
+def test_omitted_conditions_preserve_legacy():
+    config = load_collection_config("configs/collection/v2/smoke_train.yaml")
+    assert "active_conditions" not in config["collection"]
+    assert [c.value for c in resolve_conditions()] == ["natural", "controlled_correct", "controlled_incorrect"]
+
+
+def test_explicit_role_config_roundtrip(tmp_path):
+    def spec(model, loader, revision):
+        return {"id": model, "loader": loader, "revision": revision,
+                "dtype": "bfloat16", "device": "cpu",
+                "generation": {"do_sample": False, "max_new_tokens": 8}}
+    config = {"roles": {"solver": spec("google/gemma-3-4b-it", "gemma3", "solver-revision"),
+                        "critic": spec("Qwen/Qwen3-4B-Instruct-2507", "qwen3", "critic-revision"),
+                        "validator": spec("google/gemma-3-4b-it", "gemma3", "solver-revision")},
+              "dataset": {"source_split": "train", "num_questions": 2},
+              "collection": {"layers": [8], "seed": 42, "protocol_version": "v2", "active_conditions": ["natural"]},
+              "output": {"run_name": "unit"}}
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(config))
+    assert load_collection_config(path) == config
+
+
+def test_production_template_requires_team_decisions():
+    with pytest.raises(ValueError):
+        load_collection_config("configs/collection/v2/natural_production.yaml")

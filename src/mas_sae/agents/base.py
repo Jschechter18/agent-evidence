@@ -37,6 +37,10 @@ class Agent:
         self.model = model
         self.processor = processor
         self.max_new_tokens = max_new_tokens
+        self.generation_settings = {"do_sample": False}
+        self.generation_history = []
+        self.last_generation = None
+        self.text_only = False
 
     def _generate(self, prompt: str) -> str:
         messages = [
@@ -50,6 +54,9 @@ class Agent:
                 ],
             }
         ]
+
+        if self.text_only:
+            messages[0]["content"] = prompt
 
         inputs = self.processor.apply_chat_template(
             messages,
@@ -65,9 +72,17 @@ class Agent:
             output = self.model.generate(
                 **inputs,
                 max_new_tokens=self.max_new_tokens,
-                do_sample=False,
+                **self.generation_settings,
             )
 
+        count = int(output.shape[-1] - prompt_tokens)
+        self.last_generation = {
+            "generated_tokens": count,
+            "max_new_tokens": self.max_new_tokens,
+            "reached_token_budget": count >= self.max_new_tokens,
+            "finish_reason": None,
+        }
+        self.generation_history.append(dict(self.last_generation))
         return self.processor.decode(
             output[0][prompt_tokens:],
             skip_special_tokens=True,

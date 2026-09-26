@@ -454,3 +454,15 @@ def test_build_critique_prompt_default_natural_matches_constant():
 
     assert prompt == expected
     critic._generate.assert_not_called()
+
+
+def test_blind_raw_output_does_not_leak_between_questions():
+    critic = make_blind_compare_critic()
+    critic._generate = Mock(side_effect=['{"answer": "First"}', '{"answer": "Second"}', 'broken'])
+    assert critic.answer_blind("Q1", []) == "First"
+    assert critic.last_blind_raw_output == '{"answer": "First"}'
+    assert critic.answer_blind("Q2", []) == "Second"
+    assert critic.last_blind_raw_output == '{"answer": "Second"}'
+    with pytest.raises(CriticBlindAnswerError):
+        critic.answer_blind("Q3", [])
+    assert critic.last_blind_raw_output == 'broken'
