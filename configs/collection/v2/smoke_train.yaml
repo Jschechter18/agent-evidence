@@ -1,11 +1,16 @@
 # V2 collection protocol — smoke config (3 questions).
 #
-# V2 differs from V1 in how questions are chosen, not in what is collected:
+# V2 differs from V1 in how questions are chosen and how critic feedback
+# is produced; what is collected (A1/A2 decision vectors) is unchanged:
 #   - dataset.sampling: seeded stratified random sample over hop groups
 #     instead of the first N rows in dataset order (V1 was 100 % 2-hop).
 #   - dataset.experiment_split: a question-level scientific split
 #     (discovery / validation / intervention), separate from the MuSiQue
 #     source_split, shared by all three critic episodes of a question.
+#   - collection.protocol_version: a run label. v2 selects the
+#     blind-then-compare natural critic, the leakage-safe controlled
+#     prompt, and the type-checked controlled-incorrect target generator
+#     (mapping in scripts/collect_activations.py). Omitted = v1.
 #
 # PENDING TEAM SIGN-OFF — the numeric values below are placeholders that
 # reproduce the plan's recommended defaults; they are NOT decided:
@@ -40,6 +45,7 @@ collection:
     - 25
     - 33
   seed: 42
+  protocol_version: v2
 
 output:
   run_name: v2_smoke_3q

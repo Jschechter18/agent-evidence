@@ -256,3 +256,53 @@ def test_collection_config_random_rejects_hop_proportions(
 
     with pytest.raises(ValueError, match="only allowed when"):
         load_collection_config(write_config(tmp_path, text))
+
+
+def test_collection_config_protocol_version_defaults_to_absent(
+    tmp_path: Path,
+) -> None:
+    config = load_collection_config(write_config(tmp_path, V2_CONFIG))
+
+    assert "protocol_version" not in config["collection"]
+
+
+@pytest.mark.parametrize("value", ["v2", "v3", "my_label"])
+def test_collection_config_accepts_any_protocol_version_label(
+    tmp_path: Path, value: str
+) -> None:
+    text = V2_CONFIG.replace(
+        "  seed: 42\n", f"  seed: 42\n  protocol_version: {value}\n"
+    )
+    config = load_collection_config(write_config(tmp_path, text))
+
+    # the loader keeps the label as is; the collection script owns the
+    # accepted set
+    assert config["collection"]["protocol_version"] == value
+
+
+@pytest.mark.parametrize("value", ["2", "true", '""', "'  '"])
+def test_collection_config_rejects_non_string_protocol_version(
+    tmp_path: Path, value: str
+) -> None:
+    text = V2_CONFIG.replace(
+        "  seed: 42\n", f"  seed: 42\n  protocol_version: {value}\n"
+    )
+
+    with pytest.raises(ValueError, match="protocol_version"):
+        load_collection_config(write_config(tmp_path, text))
+
+
+def test_collection_config_v2_smoke_carries_v2_label() -> None:
+    config = load_collection_config(
+        Path("configs/collection/v2/smoke_train.yaml")
+    )
+
+    assert config["collection"]["protocol_version"] == "v2"
+
+
+def test_collection_config_v1_has_no_protocol_version() -> None:
+    config = load_collection_config(
+        Path("configs/collection/v1/train_100q.yaml")
+    )
+
+    assert "protocol_version" not in config["collection"]

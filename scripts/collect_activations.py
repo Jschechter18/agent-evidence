@@ -24,6 +24,22 @@ logger = logging.getLogger(__name__)
 RESULT_ROOT = Path("results/collection")
 ACTIVATION_ROOT = Path("data/activations")
 
+# What each ``collection.protocol_version`` label selects. The package
+# never sees these names; it only receives the capabilities below.
+PROTOCOLS: dict[str, dict[str, bool]] = {
+    "v1": {
+        "blind_then_compare": False,
+        "controlled_as_own_conclusion": False,
+        "type_checked_target": False,
+    },
+    "v2": {
+        "blind_then_compare": True,
+        "controlled_as_own_conclusion": True,
+        "type_checked_target": True,
+    },
+}
+DEFAULT_PROTOCOL = "v1"
+
 
 def parse_args() -> argparse.Namespace:
     """Parse activation-collection command-line arguments."""
@@ -54,7 +70,17 @@ def main() -> None:
     num_questions = config["dataset"]["num_questions"]
     layers = config["collection"]["layers"]
     seed = config["collection"]["seed"]
+    protocol_version = config["collection"].get(
+        "protocol_version", DEFAULT_PROTOCOL
+    )
     run_name = config["output"]["run_name"]
+
+    if protocol_version not in PROTOCOLS:
+        raise ValueError(
+            "collection.protocol_version must be one of "
+            f"{list(PROTOCOLS)}, got {protocol_version!r}."
+        )
+    protocol = PROTOCOLS[protocol_version]
 
     ensure_output_available(RESULT_ROOT / run_name / source_split)
     candidate_sites = [
@@ -62,20 +88,32 @@ def main() -> None:
     ]
 
     logger.info(
-        "Starting run=%s split=%s questions=%d",
+        "Starting run=%s split=%s questions=%d protocol=%s",
         run_name,
         source_split,
         num_questions,
+        protocol_version,
     )
     logger.info("Loading model %s", model_id)
 
     model, processor = load_gemma(model_id=model_id)
     solver = Solver(model, processor)
-    critic = Critic(model, processor)
+    critic = Critic(
+        model,
+        processor,
+        blind_then_compare=protocol["blind_then_compare"],
+        controlled_as_own_conclusion=protocol["controlled_as_own_conclusion"],
+    )
     validator = Validator(model, processor)
 
     resolved_config = build_resolved_config(
-        config, model, solver, critic, validator
+        config,
+        model,
+        solver,
+        critic,
+        validator,
+        protocol_version=protocol_version,
+        type_checked_target=protocol["type_checked_target"],
     )
     selection = select_questions(config["dataset"], default_seed=seed)
 
@@ -97,6 +135,7 @@ def main() -> None:
         candidate_sites=candidate_sites,
         base_seed=seed,
         experiment_splits=selection["experiment_splits"],
+        type_checked_target=protocol["type_checked_target"],
     )
 
     summary = save_collection_artifacts(

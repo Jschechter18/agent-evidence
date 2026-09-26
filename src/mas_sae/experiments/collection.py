@@ -5,7 +5,7 @@ from typing import Any, TypedDict
 
 import torch
 
-from mas_sae.agents.critic import Critic
+from mas_sae.agents.critic import Critic, CriticBlindAnswerError
 from mas_sae.agents.solver import Solver
 from mas_sae.agents.validator import Validator
 from mas_sae.data.musique import (
@@ -15,6 +15,7 @@ from mas_sae.data.musique import (
     load_musique_examples,
     sample_musique_examples,
 )
+from mas_sae.experiments.controlled_targets import ControlledTargetError
 from mas_sae.experiments.pipeline import run_question
 
 
@@ -45,11 +46,12 @@ def select_questions(
     """Select questions and assign experiment splits from ``config.dataset``.
 
     Without a ``sampling`` section, or with ``strategy: first_n``, this is
-    the V1 behaviour: the first N answerable questions in dataset order and
-    no experiment split. Otherwise a seeded (optionally hop-stratified)
-    sample is drawn, and when ``experiment_split`` is configured each
-    question id is assigned exactly one split. ``sampled_questions`` is the
-    ordered reproducibility manifest, or ``None`` on the pure V1 path.
+    the original behaviour: the first N answerable questions in dataset
+    order and no experiment split. Otherwise a seeded (optionally
+    hop-stratified) sample is drawn, and when ``experiment_split`` is
+    configured each question id is assigned exactly one split.
+    ``sampled_questions`` is the ordered reproducibility manifest, or
+    ``None`` on the pure dataset-order path.
     Seeds default to ``default_seed`` (``collection.seed``).
     """
     source_split = dataset_config["source_split"]
@@ -108,6 +110,7 @@ def collect_examples(
     candidate_sites: list[str],
     base_seed: int,
     experiment_splits: dict[str, str] | None = None,
+    type_checked_target: bool = False,
 ) -> CollectionResult:
     """Collect paired Solver-Critic episodes and activation-row mappings.
 
@@ -117,6 +120,12 @@ def collect_examples(
     one Attempt 1 activation index, while each Attempt 2 has its own index.
     When ``experiment_splits`` is given, all three records of a question also
     share that question's ``experiment_split``.
+
+    A question whose treatment cannot be constructed (``run_question`` raises
+    ``CriticBlindAnswerError`` or ``ControlledTargetError``) is skipped with
+    a warning naming the question id, contributing no records and no
+    activation rows, and collection continues with the next question. Any
+    other exception still propagates.
 
     Parameters
     ----------
@@ -141,7 +150,12 @@ def collect_examples(
         (``discovery`` / ``validation`` / ``intervention``). Assigned at
         question level, so it is written unchanged to every episode of that
         question. When omitted, records carry no ``experiment_split`` field,
-        which preserves V1 behaviour.
+        which preserves the original record schema.
+    type_checked_target
+        Forwarded to ``run_question`` together with each example's MuSiQue
+        ``question_decomposition``. When set, the controlled-incorrect
+        target comes from the type-checked generator instead of the
+        paragraph-title heuristic.
 
     Returns
     -------
@@ -188,19 +202,27 @@ def collect_examples(
             example["id"],
         )
 
-        result = run_question(
-            question_id=str(example["id"]),
-            question=example["question"],
-            paragraphs=example["paragraphs"],
-            gold=example["answer"],
-            aliases=example.get("answer_aliases", []) or [],
-            model=model,
-            solver=solver,
-            critic=critic,
-            validator=validator,
-            candidate_sites=candidate_sites,
-            seed=seed,
-        )
+        try:
+            result = run_question(
+                question_id=str(example["id"]),
+                question=example["question"],
+                paragraphs=example["paragraphs"],
+                gold=example["answer"],
+                aliases=example.get("answer_aliases", []) or [],
+                model=model,
+                solver=solver,
+                critic=critic,
+                validator=validator,
+                candidate_sites=candidate_sites,
+                seed=seed,
+                decomposition=example.get("question_decomposition") or [],
+                type_checked_target=type_checked_target,
+            )
+        except (CriticBlindAnswerError, ControlledTargetError) as error:
+            logger.warning(
+                "Skipping question %s: %s", example["id"], error
+            )
+            continue
 
         attempt1_index = len(attempt1_by_site[candidate_sites[0]])
 

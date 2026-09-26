@@ -22,7 +22,7 @@ class ModelConfig(TypedDict):
 class SamplingConfig(TypedDict):
     """How questions are drawn from the MuSiQue source split.
 
-    ``first_n`` reproduces the V1 behaviour (dataset order). ``random`` draws
+    ``first_n`` is the original behaviour (dataset order). ``random`` draws
     a seeded uniform sample. ``stratified`` draws a seeded sample with the
     given ``hop_proportions`` over hop groups (``2hop``, ``3hop``, ``4hop``).
     ``seed`` defaults to ``collection.seed`` when omitted.
@@ -53,8 +53,17 @@ class DatasetConfig(TypedDict):
 
 
 class CollectionSettings(TypedDict):
+    """Activation layers, seed, and an optional protocol label.
+
+    ``protocol_version`` is a run label that the collection script maps
+    to critic and target behaviour; the loader only checks that it is a
+    non-empty string. Omitted means the script's default, so existing
+    configs are unchanged.
+    """
+
     layers: list[int]
     seed: int
+    protocol_version: NotRequired[str]
 
 
 class OutputConfig(TypedDict):
@@ -135,6 +144,17 @@ def load_collection_config(path: str | Path) -> CollectionConfig:
     seed = collection.get("seed")
     if type(seed) is not int:
         raise ValueError("collection.seed must be an integer.")
+
+    if "protocol_version" in collection:
+        protocol_version = collection["protocol_version"]
+        if (
+            not isinstance(protocol_version, str)
+            or not protocol_version.strip()
+        ):
+            raise ValueError(
+                "collection.protocol_version must be a non-empty string "
+                "when provided."
+            )
 
     run_name = output.get("run_name")
     if not isinstance(run_name, str) or not run_name.strip():

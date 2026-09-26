@@ -1,9 +1,12 @@
+import logging
 from unittest.mock import Mock
 
 import pytest
 import torch
 
+from mas_sae.agents.critic import CriticBlindAnswerError
 from mas_sae.experiments import collection
+from mas_sae.experiments.controlled_targets import ControlledTargetError
 
 
 SITES = [
@@ -295,3 +298,153 @@ def test_select_questions_stratified_with_experiment_split(
     # same config -> same assignment
     again = collection.select_questions(dataset_config, default_seed=42)
     assert again["experiment_splits"] == splits
+
+
+def test_collect_examples_forwards_decomposition_and_target_flag(
+    monkeypatch,
+) -> None:
+    mock_run_question = Mock(side_effect=[make_result("q1"), make_result("q2")])
+    monkeypatch.setattr(collection, "run_question", mock_run_question)
+
+    decomposition = [
+        {"question": "Green >> performer", "answer": "Steve Hillage"},
+        {"question": "#1 >> spouse", "answer": "Miquette Giraudy"},
+    ]
+    examples = [
+        {
+            "id": "q1",
+            "question": "Q1",
+            "paragraphs": [],
+            "answer": "A",
+            "question_decomposition": decomposition,
+        },
+        {"id": "q2", "question": "Q2", "paragraphs": [], "answer": "B"},
+    ]
+
+    collection.collect_examples(
+        examples=examples,
+        source_split="train",
+        model=object(),
+        solver=Mock(),
+        critic=Mock(),
+        validator=Mock(),
+        candidate_sites=SITES,
+        base_seed=42,
+        type_checked_target=True,
+    )
+
+    first, second = mock_run_question.call_args_list
+    assert first.kwargs["decomposition"] == decomposition
+    assert first.kwargs["type_checked_target"] is True
+    assert second.kwargs["decomposition"] == []
+    assert second.kwargs["type_checked_target"] is True
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        CriticBlindAnswerError("no usable blind answer"),
+        ControlledTargetError("q2", ["type incompatible"]),
+    ],
+    ids=["blind_answer", "controlled_target"],
+)
+def test_collect_examples_skips_question_on_expected_treatment_error(
+    monkeypatch, caplog, error
+) -> None:
+    mock_run_question = Mock(
+        side_effect=[make_result("q1"), error, make_result("q3")]
+    )
+    monkeypatch.setattr(collection, "run_question", mock_run_question)
+
+    examples = [
+        {"id": "q1", "question": "Q1", "paragraphs": [], "answer": "A"},
+        {"id": "q2", "question": "Q2", "paragraphs": [], "answer": "B"},
+        {"id": "q3", "question": "Q3", "paragraphs": [], "answer": "C"},
+    ]
+
+    with caplog.at_level(
+        logging.WARNING, logger="mas_sae.experiments.collection"
+    ):
+        result = collection.collect_examples(
+            examples=examples,
+            source_split="train",
+            model=object(),
+            solver=Mock(),
+            critic=Mock(),
+            validator=Mock(),
+            candidate_sites=SITES,
+            base_seed=42,
+        )
+
+    # the failure did not stop collection: every question was attempted,
+    # each with the seed it would have had anyway
+    assert [
+        call.kwargs["seed"] for call in mock_run_question.call_args_list
+    ] == [42, 43, 44]
+
+    # the failed question contributes no records ...
+    records = result["records"]
+    assert len(records) == 6
+    assert {row["question_id"] for row in records} == {"q1", "q3"}
+
+    # ... and no activation rows, so indices stay aligned with the tensors
+    for site in SITES:
+        assert len(result["attempt1_by_site"][site]) == 2
+        assert len(result["attempt2_by_site"][site]) == 6
+    assert [row["attempt1_activation_index"] for row in records] == [
+        0, 0, 0, 1, 1, 1,
+    ]
+    assert [row["attempt2_activation_index"] for row in records] == list(
+        range(6)
+    )
+
+    warnings = [
+        record for record in caplog.records
+        if record.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+    assert "q2" in warnings[0].getMessage()
+    assert str(error) in warnings[0].getMessage()
+
+
+def test_collect_examples_propagates_unexpected_errors(monkeypatch) -> None:
+    monkeypatch.setattr(
+        collection,
+        "run_question",
+        Mock(side_effect=[make_result("q1"), RuntimeError("boom")]),
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        collection.collect_examples(
+            examples=[
+                {"id": "q1", "question": "Q1", "paragraphs": [], "answer": "A"},
+                {"id": "q2", "question": "Q2", "paragraphs": [], "answer": "B"},
+            ],
+            source_split="train",
+            model=object(),
+            solver=Mock(),
+            critic=Mock(),
+            validator=Mock(),
+            candidate_sites=SITES,
+            base_seed=42,
+        )
+
+
+def test_collect_examples_defaults_to_heuristic_target(monkeypatch) -> None:
+    mock_run_question = Mock(side_effect=[make_result("q1")])
+    monkeypatch.setattr(collection, "run_question", mock_run_question)
+
+    collection.collect_examples(
+        examples=[
+            {"id": "q1", "question": "Q1", "paragraphs": [], "answer": "A"},
+        ],
+        source_split="train",
+        model=object(),
+        solver=Mock(),
+        critic=Mock(),
+        validator=Mock(),
+        candidate_sites=SITES,
+        base_seed=42,
+    )
+
+    assert mock_run_question.call_args.kwargs["type_checked_target"] is False
