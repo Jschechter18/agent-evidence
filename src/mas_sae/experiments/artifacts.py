@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -37,6 +38,21 @@ def get_git_commit() -> str:
         ).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
+
+
+def sha256_text(text: object) -> str:
+    """SHA-256 of a string encoded as UTF-8."""
+    return hashlib.sha256(str(text).encode("utf-8")).hexdigest()
+
+
+def sha256_json(value: object) -> str:
+    """SHA-256 of a JSON-serializable value in canonical form."""
+    return sha256_text(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")))
+
+
+def sha256_file(path: str | Path) -> str:
+    """SHA-256 of a file's exact bytes."""
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def get_package_version(package: str) -> str:

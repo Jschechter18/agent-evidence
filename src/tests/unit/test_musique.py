@@ -132,3 +132,44 @@ def test_load_musique_examples_requires_available_questions(
             source_split="validation",
             num_questions=2,
         )
+
+
+def test_load_musique_examples_by_id_keeps_order_and_pins_revision(
+    monkeypatch,
+) -> None:
+    rows = [
+        {"id": "a", "answerable": True},
+        {"id": "b", "answerable": True},
+        {"id": "c", "answerable": False},
+    ]
+    mock_load_dataset = Mock(return_value=rows)
+    monkeypatch.setattr(musique, "load_dataset", mock_load_dataset)
+
+    examples = musique.load_musique_examples_by_id("train", ["b", "a"], revision="rev")
+
+    assert [example["id"] for example in examples] == ["b", "a"]
+    mock_load_dataset.assert_called_once_with(
+        musique.MUSIQUE_DATASET_ID, split="train", revision="rev"
+    )
+
+    with pytest.raises(ValueError, match="duplicates"):
+        musique.load_musique_examples_by_id("train", ["a", "a"])
+    with pytest.raises(RuntimeError, match="not found"):
+        musique.load_musique_examples_by_id("train", ["a", "zzz"])
+    with pytest.raises(RuntimeError, match="not answerable"):
+        musique.load_musique_examples_by_id("train", ["c"])
+    with pytest.raises(ValueError, match="revision"):
+        musique.load_musique_examples_by_id("train", ["a"], revision=" ")
+
+
+def test_unpinned_load_keeps_historical_call(
+    monkeypatch,
+) -> None:
+    mock_load_dataset = Mock(return_value=[])
+    monkeypatch.setattr(musique, "load_dataset", mock_load_dataset)
+
+    musique.load_musique_split("validation")
+
+    mock_load_dataset.assert_called_once_with(
+        musique.MUSIQUE_DATASET_ID, split="validation"
+    )

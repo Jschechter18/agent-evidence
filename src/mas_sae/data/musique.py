@@ -59,21 +59,47 @@ def download_musique(output_dir: Path) -> tuple[Path, Path]:
     return train_file, validation_file
 
 
-def load_musique_examples(
-    source_split: str,
-    num_questions: int | None = None,
-) -> list[MuSiQueExample]:
-    """Load answerable MuSiQue examples from one source split in dataset order."""
+def _validate_source_split(source_split: str) -> None:
     if source_split not in SUPPORTED_SOURCE_SPLITS:
         raise ValueError(
             f"Unsupported MuSiQue source split: {source_split!r}. "
             f"Expected one of {sorted(SUPPORTED_SOURCE_SPLITS)}."
         )
 
+
+def load_musique_split(
+    source_split: str,
+    *,
+    revision: str | None = None,
+):
+    """Load one MuSiQue source split, optionally pinned to a Hub revision.
+
+    When ``revision`` is omitted the call is identical to the historical
+    unpinned load; a non-empty revision string is forwarded to
+    ``load_dataset`` unchanged.
+    """
+    _validate_source_split(source_split)
+
+    if revision is None:
+        return load_dataset(MUSIQUE_DATASET_ID, split=source_split)
+
+    if not isinstance(revision, str) or not revision.strip():
+        raise ValueError("revision must be a non-empty string or None.")
+
+    return load_dataset(MUSIQUE_DATASET_ID, split=source_split, revision=revision)
+
+
+def load_musique_examples(
+    source_split: str,
+    num_questions: int | None = None,
+) -> list[MuSiQueExample]:
+    """Load answerable MuSiQue examples from one source split in dataset order."""
+    _validate_source_split(source_split)
+
     if num_questions is not None and num_questions <= 0:
         raise ValueError("num_questions must be greater than zero.")
 
-    dataset = load_dataset(MUSIQUE_DATASET_ID, split=source_split)
+    dataset = load_musique_split(source_split)
     examples: list[MuSiQueExample] = []
 
     for example in dataset:
@@ -92,6 +118,61 @@ def load_musique_examples(
         )
 
     return examples
+
+
+def load_musique_examples_by_id(
+    source_split: str,
+    question_ids: list[str],
+    *,
+    revision: str | None = None,
+) -> list[MuSiQueExample]:
+    """Load the given MuSiQue questions, in the given order, without sampling.
+
+    Every id must exist exactly once in the split and be answerable; ids
+    must be unique. Examples are returned unchanged, so paragraph text and
+    order are exactly the dataset's.
+    """
+    ids = [str(question_id) for question_id in question_ids]
+
+    if not ids:
+        raise ValueError("question_ids must not be empty.")
+
+    if len(set(ids)) != len(ids):
+        raise ValueError("question_ids must not contain duplicates.")
+
+    dataset = load_musique_split(source_split, revision=revision)
+    wanted = set(ids)
+    found: dict[str, MuSiQueExample] = {}
+
+    for example in dataset:
+        question_id = str(example["id"])
+
+        if question_id not in wanted:
+            continue
+
+        if question_id in found:
+            raise RuntimeError(
+                f"Question id {question_id!r} occurs more than once in "
+                f"{source_split!r}."
+            )
+
+        if not example.get("answerable", True):
+            raise RuntimeError(
+                f"Question id {question_id!r} is not answerable in "
+                f"{source_split!r}."
+            )
+
+        found[question_id] = cast(MuSiQueExample, dict(example))
+
+    missing = [question_id for question_id in ids if question_id not in found]
+
+    if missing:
+        raise RuntimeError(
+            f"{len(missing)} question ids were not found in {source_split!r}: "
+            f"{missing[:5]}{'...' if len(missing) > 5 else ''}."
+        )
+
+    return [found[question_id] for question_id in ids]
 
 
 def hop_type(question_id: str) -> str:
@@ -222,11 +303,7 @@ def sample_musique_examples(
     RuntimeError
         If the pool, or any hop group, has fewer questions than requested.
     """
-    if source_split not in SUPPORTED_SOURCE_SPLITS:
-        raise ValueError(
-            f"Unsupported MuSiQue source split: {source_split!r}. "
-            f"Expected one of {sorted(SUPPORTED_SOURCE_SPLITS)}."
-        )
+    _validate_source_split(source_split)
 
     if num_questions <= 0:
         raise ValueError("num_questions must be greater than zero.")
@@ -234,7 +311,7 @@ def sample_musique_examples(
     if hop_proportions is not None:
         validate_proportions(hop_proportions, name="hop_proportions")
 
-    dataset = load_dataset(MUSIQUE_DATASET_ID, split=source_split)
+    dataset = load_musique_split(source_split)
     pool: list[MuSiQueExample] = [
         cast(MuSiQueExample, dict(example))
         for example in dataset

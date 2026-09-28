@@ -171,3 +171,11 @@ def test_get_package_version_returns_unknown_when_missing(
     monkeypatch.setattr(artifacts, "version", raise_missing)
 
     assert artifacts.get_package_version("missing-package") == "unknown"
+
+
+def test_sha256_helpers_are_canonical(tmp_path) -> None:
+    assert artifacts.sha256_json({"a": 1, "b": [2]}) == artifacts.sha256_json({"b": [2], "a": 1})
+    assert artifacts.sha256_json({"a": 1}) != artifacts.sha256_json({"a": 2})
+    path = tmp_path / "file.txt"
+    path.write_bytes("é".encode("utf-8"))
+    assert artifacts.sha256_file(path) == artifacts.sha256_text("é")

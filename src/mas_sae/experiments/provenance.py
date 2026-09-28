@@ -40,6 +40,7 @@ def role_metadata(agent: Any) -> dict[str, Any]:
         "requested_placement": spec.get("device_map", spec.get("device")),
         "quantization": scalar(getattr(config, "quantization_config", None)),
         "generation": spec.get("generation", {"max_new_tokens": agent.max_new_tokens, "do_sample": False}),
+        "chat_template_kwargs": dict(getattr(agent, "chat_template_kwargs", None) or {}),
     }
 
 

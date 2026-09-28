@@ -1,0 +1,42 @@
+# Larger-model behavioural validation of the Natural blind-first critic.
+# Not the mechanistic experiment: no activation capture, no SAE, no Validator,
+# no controlled conditions. Not runnable on the 23 GiB A10G (BF16 12B + 14B).
+dataset:
+  repo: dgslibisey/MuSiQue
+  revision: c8f4f8c9465fb69d31a8eae894c3fd509c4ca321
+  source_split: train
+manifest:
+  # Exact bytes of results/collection/critic_ab_100q/sampled_questions.json
+  # from the 2026-09-24 4B diagnostic (100 ids, seed-42 stratified 60/30/10).
+  path: configs/validation/manifests/critic_ab_100q_sampled_questions.json
+  sha256: 9d99d2e70791dc39280c2c45488077baf9fd79b78c46783eefdb6baf7fe4f4dd
+roles:
+  solver:
+    id: google/gemma-3-12b-it
+    revision: 96b6f1eccf38110c56df3a15bffe176da04bfd80
+    loader: gemma3
+    dtype: bfloat16
+    device: cuda:0
+    generation: {max_new_tokens: 32, do_sample: false}
+  same_model_critic:
+    # Must be byte-identical in weight identity to the solver (shared load).
+    id: google/gemma-3-12b-it
+    revision: 96b6f1eccf38110c56df3a15bffe176da04bfd80
+    loader: gemma3
+    dtype: bfloat16
+    device: cuda:0
+    generation: {max_new_tokens: 256, do_sample: false}
+  cross_model_critic:
+    id: Qwen/Qwen3-14B
+    revision: 40c069824f4251a91eefaf281ebe4c544efd3e18
+    loader: qwen3
+    dtype: bfloat16
+    device: cuda:0
+    # Experiment decision: explicit non-thinking mode via the chat template.
+    chat_template_kwargs: {enable_thinking: false}
+    generation: {max_new_tokens: 256, do_sample: false}
+validation:
+  protocol: natural_blind_first
+  seed: 42
+output:
+  run_name: gemma12b_qwen14b_natural_100q
