@@ -39,6 +39,7 @@ def main():
     
     run_directory = create_sae_run_directory(
         run_name=f"sae-l{hp.latent_dim}",
+        layer=args.layer,
         results_root=results_root,
         subdirectories=subdirectories,
     )
@@ -67,8 +68,14 @@ def main():
             )
 
         hp.input_dim = int(next(iter(train_dataloader)).shape[-1])
+        
+        config = {
+            **asdict(hp),
+        "layer": args.layer,
+        "activation_run_name": args.run_name,
+        }
 
-        write_run_config(run_directory, asdict(hp))
+        write_run_config(run_directory, config)
         
         device = torch.device(
             "cuda" if torch.cuda.is_available()

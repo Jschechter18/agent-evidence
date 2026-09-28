@@ -15,9 +15,16 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def build_run_id(run_name: str, timestamp: datetime) -> str:
-    """Build a unique, readable run identifier."""
-    return f"{timestamp:%Y%m%dT%H%M%S%fZ}_{run_name}"
+def build_run_id(timestamp: datetime, git_commit: str) -> str:
+    """Build a run identifier from a UTC timestamp and Git commit."""
+    normalized_commit = git_commit.strip()
+    short_commit = (
+        normalized_commit[:12]
+        if normalized_commit and normalized_commit != "unknown"
+        else "unknown"
+    )
+
+    return f"{timestamp:%Y%m%dT%H%M%S%fZ}-{short_commit}"
 
 
 def get_git_commit() -> str:
@@ -69,13 +76,16 @@ def _write_json(path: Path, data: dict[str, object]) -> None:
 def build_manifest(
     run_id: str,
     run_name: str,
+    layer: int,
     timestamp: datetime,
+    git_commit: str,
 ) -> dict[str, object]:
     return {
         "run_id": run_id,
         "run_name": run_name,
+        "layer": layer,
         "created_at": timestamp.isoformat(),
-        "git_commit": get_git_commit(),
+        "git_commit": git_commit,
         "command": get_run_command(),
         "status": "running",
         "error_message": "",
@@ -84,19 +94,21 @@ def build_manifest(
 
 def create_sae_run_directory(
     run_name: str,
+    layer: int,
     results_root: Path = Path("results"),
     subdirectories: tuple[str, ...] = (),
 ) -> Path:
     """Create one experiment run directory and its initial manifest."""
     timestamp = utc_now()
-    run_id = build_run_id(run_name, timestamp)
-    run_directory = results_root / "runs" / f"{timestamp:%Y-%m-%d}" / run_id
+    git_commit = get_git_commit()
+    run_id = build_run_id(timestamp, git_commit)
+    run_directory = (results_root / "runs" / f"layer_{layer:02d}" / run_id)
 
     run_directory.mkdir(parents=True)
     for subdirectory in subdirectories:
         (run_directory / subdirectory).mkdir()
 
-    manifest = build_manifest(run_id, run_name, timestamp)
+    manifest = build_manifest(run_id, run_name, layer, timestamp, git_commit)
     _write_json(run_directory / "manifest.json", manifest)
 
     return run_directory

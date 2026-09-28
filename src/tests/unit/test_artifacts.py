@@ -7,6 +7,25 @@ import pytest
 from mas_sae.experiments import artifacts
 
 
+def test_build_run_id_uses_timestamp_and_short_commit() -> None:
+    timestamp = datetime(2026, 9, 24, 15, 30, 45, 123456, tzinfo=timezone.utc)
+
+    run_id = artifacts.build_run_id(
+        timestamp,
+        "abc123def4567890abc123def4567890abc123de",
+    )
+
+    assert run_id == "20260924T153045123456Z-abc123def456"
+
+
+def test_build_run_id_handles_unknown_commit() -> None:
+    timestamp = datetime(2026, 9, 24, 15, 30, 45, 123456, tzinfo=timezone.utc)
+
+    run_id = artifacts.build_run_id(timestamp, "unknown")
+
+    assert run_id == "20260924T153045123456Z-unknown"
+
+
 def test_create_run_directory_uses_reusable_run_metadata(
     tmp_path,
     monkeypatch,
@@ -27,17 +46,23 @@ def test_create_run_directory_uses_reusable_run_metadata(
 
     run_directory = artifacts.create_sae_run_directory(
         run_name="sae-l64",
+        layer=8,
         results_root=tmp_path,
         subdirectories=("checkpoints", "plots"),
     )
 
     manifest = json.loads((run_directory / "manifest.json").read_text())
 
-    assert git_commit not in run_directory.name
-    assert run_directory.name == "20260916T153045123456Z_sae-l64"
+    assert run_directory == (
+        tmp_path
+        / "runs"
+        / "layer_08"
+        / "20260916T153045123456Z-abc123def456"
+    )
     assert manifest["git_commit"] == git_commit
     assert manifest["run_id"] == run_directory.name
     assert manifest["run_name"] == "sae-l64"
+    assert manifest["layer"] == 8
     assert manifest["created_at"] == timestamp.isoformat()
     assert manifest["command"] == "python scripts/train_sae.py"
     assert manifest["status"] == "running"
@@ -82,6 +107,7 @@ def test_update_run_manifest_records_completion(tmp_path, monkeypatch) -> None:
     )
     run_directory = artifacts.create_sae_run_directory(
         run_name="sae-l64",
+        layer=8,
         results_root=tmp_path,
     )
 
@@ -100,6 +126,7 @@ def test_update_run_manifest_records_failure(tmp_path, monkeypatch) -> None:
     )
     run_directory = artifacts.create_sae_run_directory(
         run_name="sae-l64",
+        layer=8,
         results_root=tmp_path,
     )
 
