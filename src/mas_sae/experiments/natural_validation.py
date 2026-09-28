@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +40,10 @@ from mas_sae.experiments import artifacts
 from mas_sae.experiments.artifacts import sha256_file, sha256_json, sha256_text
 from mas_sae.experiments.provenance import environment_metadata, role_metadata
 from mas_sae.experiments.records import append_jsonl, read_jsonl
-from mas_sae.experiments.reproducibility import seed_everything
+from mas_sae.experiments.reproducibility import (
+    seed_everything,
+    validate_commit_revision,
+)
 from mas_sae.models.roles import resolve_role_spec, weight_identity
 
 logger = logging.getLogger(__name__)
@@ -83,12 +85,6 @@ def _require_text(section: dict[str, Any], key: str, name: str) -> str:
     return value
 
 
-def _require_commit_revision(value: Any, name: str) -> None:
-    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{40}", value) is None:
-        raise ValueError(f"{name}.revision must pin an immutable revision "
-                         "(a full lowercase 40-character hex commit SHA).")
-
-
 def load_validation_config(path: str | Path) -> dict[str, Any]:
     """Load and validate one Natural-validation YAML config.
 
@@ -108,7 +104,7 @@ def load_validation_config(path: str | Path) -> dict[str, Any]:
     dataset = _require_mapping(raw, "dataset")
     if _require_text(dataset, "repo", "dataset") != MUSIQUE_DATASET_ID:
         raise ValueError(f"dataset.repo must be {MUSIQUE_DATASET_ID!r}; the loader supports no other dataset.")
-    _require_commit_revision(dataset.get("revision"), "dataset")
+    validate_commit_revision(dataset.get("revision"), "dataset")
     if dataset.get("source_split") not in SUPPORTED_SOURCE_SPLITS:
         raise ValueError(f"dataset.source_split must be one of {sorted(SUPPORTED_SOURCE_SPLITS)}.")
 
@@ -124,7 +120,7 @@ def load_validation_config(path: str | Path) -> dict[str, Any]:
     resolved = {role: resolve_role_spec(role, roles[role], default_max_new_tokens=DEFAULT_TOKENS[role])
                 for role in DEFAULT_TOKENS}
     for role, spec in resolved.items():
-        _require_commit_revision(spec["revision"], f"roles.{role}")
+        validate_commit_revision(spec["revision"], f"roles.{role}")
     if weight_identity(resolved["same_model_critic"]) != weight_identity(resolved[SOLVER_ROLE]):
         raise ValueError("roles.same_model_critic must load exactly the Solver's checkpoint "
                          "(same id, revision, loader, dtype, placement and cache_dir).")

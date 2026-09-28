@@ -11,6 +11,7 @@ from mas_sae.data.musique import (
     validate_proportions,
 )
 from mas_sae.experiments.conditions import OMITTED, resolve_conditions
+from mas_sae.experiments.reproducibility import validate_commit_revision
 from mas_sae.models.roles import resolve_roles
 
 
@@ -50,6 +51,7 @@ class ExperimentSplitConfig(TypedDict):
 class DatasetConfig(TypedDict):
     source_split: str
     num_questions: int
+    revision: NotRequired[str]
     sampling: NotRequired[SamplingConfig]
     experiment_split: NotRequired[ExperimentSplitConfig]
 
@@ -118,6 +120,9 @@ def load_collection_config(path: str | Path) -> CollectionConfig:
             "dataset.source_split must be one of "
             f"{sorted(SUPPORTED_SOURCE_SPLITS)}."
         )
+
+    if "revision" in dataset:
+        validate_commit_revision(dataset["revision"], "dataset")
 
     num_questions = dataset.get("num_questions")
     if type(num_questions) is not int or num_questions <= 0:

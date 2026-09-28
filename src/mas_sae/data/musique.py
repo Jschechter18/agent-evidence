@@ -86,12 +86,41 @@ def load_musique_split(
     if not isinstance(revision, str) or not revision.strip():
         raise ValueError("revision must be a non-empty string or None.")
 
-    return load_dataset(MUSIQUE_DATASET_ID, split=source_split, revision=revision)
+    dataset = load_dataset(
+        MUSIQUE_DATASET_ID,
+        split=source_split,
+        revision=revision,
+    )
+
+    # In Hugging Face offline mode, ``load_dataset`` may silently fall
+    # back to the latest cached copy even when a different revision was
+    # requested. MuSiQue's current datasets cache layout includes the Hub
+    # revision as a directory component, so verify the data actually
+    # came from the requested revision and fail closed on a mismatch.
+    cache_files = getattr(dataset, "cache_files", None) or []
+    filenames = [
+        item.get("filename")
+        for item in cache_files
+        if isinstance(item, dict) and isinstance(item.get("filename"), str)
+    ]
+
+    if (
+        not filenames
+        or any(revision not in Path(filename).parts for filename in filenames)
+    ):
+        raise RuntimeError(
+            f"Loaded MuSiQue cache does not match pinned revision {revision}: "
+            f"{filenames}"
+        )
+
+    return dataset
 
 
 def load_musique_examples(
     source_split: str,
     num_questions: int | None = None,
+    *,
+    revision: str | None = None,
 ) -> list[MuSiQueExample]:
     """Load answerable MuSiQue examples from one source split in dataset order."""
     _validate_source_split(source_split)
@@ -99,7 +128,7 @@ def load_musique_examples(
     if num_questions is not None and num_questions <= 0:
         raise ValueError("num_questions must be greater than zero.")
 
-    dataset = load_musique_split(source_split)
+    dataset = load_musique_split(source_split, revision=revision)
     examples: list[MuSiQueExample] = []
 
     for example in dataset:
@@ -273,6 +302,7 @@ def sample_musique_examples(
     num_questions: int,
     seed: int,
     hop_proportions: dict[str, float] | None = None,
+    revision: str | None = None,
 ) -> list[MuSiQueExample]:
     """Draw a seeded random sample of answerable MuSiQue questions.
 
@@ -311,7 +341,7 @@ def sample_musique_examples(
     if hop_proportions is not None:
         validate_proportions(hop_proportions, name="hop_proportions")
 
-    dataset = load_musique_split(source_split)
+    dataset = load_musique_split(source_split, revision=revision)
     pool: list[MuSiQueExample] = [
         cast(MuSiQueExample, dict(example))
         for example in dataset

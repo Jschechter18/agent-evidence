@@ -61,11 +61,13 @@ def select_questions(
     sampling = dataset_config.get("sampling") or {}
     strategy = sampling.get("strategy", "first_n")
     split_config = dataset_config.get("experiment_split")
+    revision = dataset_config.get("revision")
 
     if strategy == "first_n":
         examples = load_musique_examples(
             source_split=source_split,
             num_questions=num_questions,
+            revision=revision,
         )
     else:
         examples = sample_musique_examples(
@@ -77,6 +79,7 @@ def select_questions(
                 if strategy == "stratified"
                 else None
             ),
+            revision=revision,
         )
 
     experiment_splits = None

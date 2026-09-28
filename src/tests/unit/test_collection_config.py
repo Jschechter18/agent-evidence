@@ -198,6 +198,51 @@ def test_collection_config_accepts_v2_sampling_and_split(
     }
 
 
+
+def test_collection_config_accepts_pinned_dataset_revision(
+    tmp_path: Path,
+) -> None:
+    revision = "c8f4f8c9465fb69d31a8eae894c3fd509c4ca321"
+    text = V2_CONFIG.replace(
+        "dataset:\n",
+        f"dataset:\n  revision: {revision}\n",
+        1,
+    )
+
+    config = load_collection_config(
+        write_config(tmp_path, text)
+    )
+
+    assert config["dataset"]["revision"] == revision
+
+
+@pytest.mark.parametrize(
+    "revision",
+    [
+        "main",
+        "abcdef0",
+        "A" * 40,
+    ],
+)
+def test_collection_config_rejects_mutable_or_invalid_dataset_revision(
+    tmp_path: Path,
+    revision: str,
+) -> None:
+    text = V2_CONFIG.replace(
+        "dataset:\n",
+        f"dataset:\n  revision: {revision}\n",
+        1,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"dataset\.revision.*immutable revision",
+    ):
+        load_collection_config(
+            write_config(tmp_path, text)
+        )
+
+
 def test_collection_config_v1_has_no_sampling_sections(
     tmp_path: Path,
 ) -> None:
