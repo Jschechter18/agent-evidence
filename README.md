@@ -228,5 +228,10 @@ Rules so runs stay comparable across machines:
   skipped and written to `exclusions.jsonl`; `collected_question_ids.json`
   lists the questions that produced activation rows.
 - Generation telemetry records token counts and whether the budget was reached.
+- Collection saves progress in chunks (`output.chunk_size`, default 250);
+  restart an interrupted collection with `--resume`.
+- Train and validation progress are tracked separately under one `run_name`.
+- Resume refuses if the config, questions, revisions, code or environment
+  changed.
 - Still unresolved for production: final role models and revisions, layers,
-  dataset scope, and token budgets. Full-run checkpoint/resume is deferred.
+  dataset scope, and token budgets.

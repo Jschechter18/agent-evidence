@@ -117,6 +117,7 @@ def collect_examples(
     experiment_splits: dict[str, str] | None = None,
     type_checked_target: bool = False,
     active_conditions=OMITTED,
+    question_offset: int = 0,
 ) -> CollectionResult:
     """Collect paired Solver-Critic episodes and activation-row mappings.
 
@@ -162,6 +163,11 @@ def collect_examples(
         ``question_decomposition``. When set, the controlled-incorrect
         target comes from the type-checked generator instead of the
         paragraph-title heuristic.
+    question_offset
+        Position of ``examples[0]`` in the full ordered question list. A
+        chunk of a longer run passes its start position so seeds and
+        exclusion ``question_index`` values match an uninterrupted run;
+        activation indices stay local to this call.
 
     Returns
     -------
@@ -179,6 +185,8 @@ def collect_examples(
         raise ValueError("examples must not be empty.")
     if not candidate_sites:
         raise ValueError("candidate_sites must not be empty.")
+    if type(question_offset) is not int or question_offset < 0:
+        raise ValueError("question_offset must be a non-negative integer.")
 
     if experiment_splits is not None:
         missing = [
@@ -201,11 +209,11 @@ def collect_examples(
     records: list[dict[str, Any]] = []
     exclusions: list[dict[str, Any]] = []
 
-    for question_index, example in enumerate(examples):
+    for question_index, example in enumerate(examples, start=question_offset):
         seed = base_seed + question_index
         logger.info(
             "Collecting question %d/%d (%s)",
-            question_index + 1,
+            question_index - question_offset + 1,
             len(examples),
             example["id"],
         )

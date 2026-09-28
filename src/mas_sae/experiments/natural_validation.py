@@ -41,6 +41,7 @@ from mas_sae.experiments.artifacts import sha256_file, sha256_json, sha256_text
 from mas_sae.experiments.provenance import environment_metadata, role_metadata
 from mas_sae.experiments.records import append_jsonl, read_jsonl
 from mas_sae.experiments.reproducibility import (
+    config_sha256,
     seed_everything,
     validate_commit_revision,
 )
@@ -178,16 +179,6 @@ def input_digests(example: dict[str, Any]) -> dict[str, Any]:
 def inputs_sha256(examples: list[dict[str, Any]]) -> str:
     """One digest over all per-question input digests, in order."""
     return sha256_json([input_digests(example)["input_sha256"] for example in examples])
-
-
-def config_sha256(config: dict[str, Any]) -> str:
-    """Digest of every scientifically meaningful setting (all but ``output``).
-
-    Covers the resolved roles (id, revision, dtype, placement, generation,
-    chat-template options), dataset revision and split, manifest, protocol
-    and seed; a resumed run must match it exactly.
-    """
-    return sha256_json({key: value for key, value in config.items() if key != "output"})
 
 
 def _telemetry(agent: Any) -> dict[str, Any]:
