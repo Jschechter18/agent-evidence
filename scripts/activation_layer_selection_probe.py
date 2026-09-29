@@ -5,41 +5,44 @@ before any SAE gets trained specifically for downstream analysis.
 
 Uses the real train/validation split produced by the collection pipeline
 directly (results/collection/<run_name>/{train,validation}/interactions.jsonl),
-rather than a random split -- addressing Josh's earlier review comment that
-fit_probe should support a real, predetermined split.
+rather than a random split.
+
+Config is loaded from a YAML file (default: configs/activation_layer_selection.yaml)
+via --config, rather than hardcoded constants, so a new run (e.g. once #36's
+scaled collection lands) only requires editing the YAML, not the code.
 
 NOTE: as of this writing, run_name="scale_smoke_1q" is a 1-question smoke
-test (3 train episodes, a handful of validation episodes) -- far too small
-to draw a real layer-selection conclusion from. This run validates that the
-loading/probing/comparison mechanics work correctly end-to-end on real data;
-re-run against a larger collection run (once #36's scaled collection lands)
-before trusting the recommended layer.
+test. This run validates that the loading/probing/comparison mechanics work correctly
+end-to-end on real data; re-run against a larger collection run before
+trusting the recommended layer.
 
-Run from the repo root with the `capstone` conda env active:
-    python scripts/activation_layer_selection_probe.py
 """
 
+import argparse
 import json
-from dataclasses import dataclass, field
 from pathlib import Path
 
+from mas_sae.probe.config import ActivationLayerSelectionConfig
 from mas_sae.probe.data import load_real_layer_split
 from mas_sae.probe.model import fit_probe
+from mas_sae.utils.versioning import create_versioned_run_dir
 
 
-@dataclass
-class ActivationLayerSelectionConfig:
-    seed: int = 42
-    run_name: str = "scale_smoke_1q"
-    candidate_layers: list = field(default_factory=lambda: ["08", "17", "25", "33"])
-    data_root: Path = Path("data/activations")
-    results_root: Path = Path("results/collection")
-    output_dir: Path = Path("results/activation_layer_selection")
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("configs/activation_layer_selection.yaml"),
+        help="Path to a YAML config file (see ActivationLayerSelectionConfig).",
+    )
+    return parser.parse_args()
 
 
 def main():
-    config = ActivationLayerSelectionConfig()
-    config.output_dir.mkdir(parents=True, exist_ok=True)
+    args = parse_args()
+    config = ActivationLayerSelectionConfig.from_yaml(args.config)
+    run_dir = create_versioned_run_dir(config.output_dir)
 
     results = {}
     for layer in config.candidate_layers:
@@ -54,18 +57,12 @@ def main():
 
         try:
             probe, scaler, metrics, *_ = fit_probe(X_train, y_train, X_val, y_val, seed=config.seed)
-            metrics.pop("f1", None)  # excluded here: unreliable on tiny smoke-test splits
-                                      # (see conversation notes -- can look good on a
-                                      # constant/degenerate prediction due to class
-                                      # imbalance). fit_probe() itself still computes it
-                                      # for callers that do want it (e.g. probe_pipeline.py).
+            metrics.pop("f1", None)  # excluded 
+            metrics["layer_number"] = int(layer)  # programmatic access without re-parsing the key string
             results[f"layer_{layer}"] = metrics
             print(f"  metrics: {metrics}")
         except ValueError as e:
-            # With this small a smoke-test dataset, a split can end up with
-            # only one class present, which several sklearn metrics can't
-            # compute. Record the failure rather than crashing the whole run.
-            results[f"layer_{layer}"] = {"error": str(e)}
+            results[f"layer_{layer}"] = {"error": str(e), "layer_number": int(layer)}
             print(f"  could not fit/score probe on this split: {e}")
 
     scored = {k: v for k, v in results.items() if "auroc" in v}
@@ -81,7 +78,7 @@ def main():
             "dataset this small. Re-run against a larger collection run."
         )
 
-    with open(config.output_dir / f"{config.run_name}_layer_selection_results.json", "w") as f:
+    with open(run_dir / f"{config.run_name}_layer_selection_results.json", "w") as f:
         json.dump(
             {
                 "run_name": config.run_name,
@@ -93,7 +90,7 @@ def main():
             indent=2,
         )
 
-    print(f"\nAll layer-selection outputs written to {config.output_dir.resolve()}")
+    print(f"\nAll layer-selection outputs written to {run_dir.resolve()}")
 
 
 if __name__ == "__main__":
