@@ -1,0 +1,46 @@
+roles:
+  solver:
+    id: google/gemma-3-4b-it
+    revision: 093f9f388b31de276ce2de164bdc2081324b9767
+    loader: gemma3
+    dtype: bfloat16
+    device: cuda:0
+    generation: {max_new_tokens: 64, do_sample: false}
+
+  critic:
+    id: Qwen/Qwen3-4B-Instruct-2507
+    revision: cdbee75f17c01a7cc42f958dc650907174af0554
+    loader: qwen3
+    dtype: bfloat16
+    device: cuda:0
+    generation: {max_new_tokens: 256, do_sample: false}
+
+  validator:
+    id: google/gemma-3-4b-it
+    revision: 093f9f388b31de276ce2de164bdc2081324b9767
+    loader: gemma3
+    dtype: bfloat16
+    device: cuda:0
+    generation: {max_new_tokens: 4, do_sample: false}
+
+dataset:
+  revision: c8f4f8c9465fb69d31a8eae894c3fd509c4ca321
+  source_split: train
+  num_questions: 2000
+  sampling:
+    strategy: random
+  experiment_split:
+    proportions:
+      discovery: 0.6
+      validation: 0.2
+      intervention: 0.2
+
+collection:
+  protocol_version: v2
+  active_conditions: [natural]
+  layers: [8, 12, 17, 21, 25, 28, 30, 31, 33]
+  seed: 42
+
+output:
+  run_name: natural_4b_layer_scan
+  chunk_size: 250
