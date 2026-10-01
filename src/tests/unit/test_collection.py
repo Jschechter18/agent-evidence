@@ -238,7 +238,9 @@ def test_select_questions_first_n_is_v1_behaviour(monkeypatch) -> None:
     )
 
     mock_first_n.assert_called_once_with(
-        source_split="train", num_questions=2
+        source_split="train",
+        num_questions=2,
+        revision=None,
     )
     mock_sample.assert_not_called()
     assert selection["examples"] == examples
@@ -280,6 +282,7 @@ def test_select_questions_stratified_with_experiment_split(
         num_questions=3,
         seed=42,
         hop_proportions={"2hop": 0.7, "3hop": 0.3},
+        revision=None,
     )
 
     splits = selection["experiment_splits"]
@@ -298,6 +301,78 @@ def test_select_questions_stratified_with_experiment_split(
     # same config -> same assignment
     again = collection.select_questions(dataset_config, default_seed=42)
     assert again["experiment_splits"] == splits
+
+
+
+def test_select_questions_first_n_forwards_revision(
+    monkeypatch,
+) -> None:
+    revision = "c8f4f8c9465fb69d31a8eae894c3fd509c4ca321"
+    examples = [{"id": "2hop__1_2"}]
+    mock_first_n = Mock(return_value=examples)
+
+    monkeypatch.setattr(
+        collection,
+        "load_musique_examples",
+        mock_first_n,
+    )
+    monkeypatch.setattr(
+        collection,
+        "sample_musique_examples",
+        Mock(side_effect=AssertionError),
+    )
+
+    collection.select_questions(
+        {
+            "source_split": "train",
+            "num_questions": 1,
+            "revision": revision,
+        },
+        default_seed=42,
+    )
+
+    mock_first_n.assert_called_once_with(
+        source_split="train",
+        num_questions=1,
+        revision=revision,
+    )
+
+
+def test_select_questions_sampled_forwards_revision(
+    monkeypatch,
+) -> None:
+    revision = "c8f4f8c9465fb69d31a8eae894c3fd509c4ca321"
+    examples = [{"id": "2hop__1_2"}]
+    mock_sample = Mock(return_value=examples)
+
+    monkeypatch.setattr(
+        collection,
+        "sample_musique_examples",
+        mock_sample,
+    )
+    monkeypatch.setattr(
+        collection,
+        "load_musique_examples",
+        Mock(side_effect=AssertionError),
+    )
+
+    collection.select_questions(
+        {
+            "source_split": "train",
+            "num_questions": 1,
+            "revision": revision,
+            "sampling": {"strategy": "random"},
+        },
+        default_seed=42,
+    )
+
+    mock_sample.assert_called_once_with(
+        source_split="train",
+        num_questions=1,
+        seed=42,
+        hop_proportions=None,
+        revision=revision,
+    )
 
 
 def test_collect_examples_forwards_decomposition_and_target_flag(

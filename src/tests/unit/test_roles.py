@@ -5,6 +5,7 @@ from unittest.mock import Mock
 import pytest
 import torch
 
+from mas_sae.agents.critic import Critic
 from mas_sae.agents.solver import Solver
 from mas_sae.models import roles
 
@@ -66,3 +67,36 @@ def test_generation_telemetry_and_text_only_messages(count, budget, reached):
                                      "reached_token_budget": reached, "finish_reason": None}
     assert model.generate.call_args.kwargs["temperature"] == 0.5
     assert model.generate.call_args.kwargs["top_p"] == 0.9
+
+
+def test_shared_gemma_agents_keep_mutable_configuration_isolated(monkeypatch):
+    solver_spec = specs()["solver"]
+    critic_spec = roles.resolve_role_spec(
+        "same_model_critic", {**solver_spec, "generation": {"max_new_tokens": 256}},
+        default_max_new_tokens=256,
+    )
+    load = Mock(side_effect=lambda spec: (object(), object()))
+    monkeypatch.setattr(roles, "load_spec", load)
+    loaded = roles.load_role_models({"solver": solver_spec, "same_model_critic": critic_spec})
+    solver = Solver(*loaded["solver"])
+    critic = Critic(*loaded["same_model_critic"], blind_then_compare=True)
+    roles.configure_agent(solver, solver_spec)
+    roles.configure_agent(critic, critic_spec)
+
+    assert solver.model is critic.model
+    assert solver.processor is critic.processor
+    assert solver.generation_settings is not critic.generation_settings
+    assert solver.generation_settings == critic.generation_settings == {"do_sample": False}
+    critic.generation_settings["do_sample"] = True
+    assert solver.generation_settings == {"do_sample": False}
+
+    assert solver.chat_template_kwargs is not critic.chat_template_kwargs
+    assert solver.chat_template_kwargs == critic.chat_template_kwargs == {}
+    critic.chat_template_kwargs["style"] = "critic"
+    assert solver.chat_template_kwargs == {}
+    solver.chat_template_kwargs["style"] = "solver"
+    assert critic.chat_template_kwargs == {"style": "critic"}
+
+    assert solver.max_new_tokens == 32
+    assert critic.max_new_tokens == 256
+    load.assert_called_once_with(solver_spec)

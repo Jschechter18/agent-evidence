@@ -176,9 +176,9 @@ Models used by the Solver-Critic pipeline (all from Hugging Face):
   (the validated snapshot recovered during the team's provenance review).
 - **Cross-model Natural Critic used in protocol validation:**
   `Qwen/Qwen3-4B-Instruct-2507`, revision `cdbee75f17c01a7cc42f958dc650907174af0554`.
-- **Final production roles (`configs/collection/v2/natural_production.yaml`):**
-  intentionally `null` until the larger-model validation is complete. No
-  larger model has been selected in this repository yet.
+- **Production roles (`configs/collection/v2/natural_4b_full_*.yaml`):**
+  Gemma-3-4B-it as Solver and Validator, Qwen3-4B-Instruct-2507 as Natural
+  Critic, at the revisions above. Gemma-3-12B in BF16 does not fit one A10G.
 
 Setup (once per machine):
 
@@ -228,5 +228,11 @@ Rules so runs stay comparable across machines:
   skipped and written to `exclusions.jsonl`; `collected_question_ids.json`
   lists the questions that produced activation rows.
 - Generation telemetry records token counts and whether the budget was reached.
-- Still unresolved for production: final role models and revisions, layers,
-  dataset scope, and token budgets. Full-run checkpoint/resume is deferred.
+- Collection saves progress in chunks (`output.chunk_size`, default 250);
+  restart an interrupted collection with `--resume`.
+- Train and validation progress are tracked separately under one `run_name`.
+- Resume refuses if the config, questions, revisions, code or environment
+  changed.
+- Production collects full MuSiQue train (19,938) and validation (2,417)
+  under one `run_name`, from Solver layers 8, 17, 25 and 33.
+- Token budgets: Solver 64, Critic 256, Validator 4.
