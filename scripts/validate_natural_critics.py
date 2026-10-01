@@ -28,8 +28,6 @@ def parse_args() -> argparse.Namespace:
                     "cross-model arms from a pinned YAML config (no activations, no Validator)."
     )
     parser.add_argument("--config", type=Path, required=True, help="Path to a validation YAML config.")
-    parser.add_argument("--output-dir", type=Path, default=None,
-                        help="Output directory (default: results/natural_validation/<run_name>).")
     parser.add_argument("--resume", action="store_true",
                         help="Continue an existing output directory; completed rows are reused, never regenerated.")
     return parser.parse_args()
@@ -42,7 +40,7 @@ def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
     config = load_validation_config(args.config)
-    output_dir = args.output_dir or RESULT_ROOT / config["output"]["run_name"]
+    output_dir = RESULT_ROOT / config["output"]["run_name"]
     manifest, manifest_sha256 = load_manifest(config["manifest"]["path"], config["manifest"]["sha256"])
     logger.info("Manifest %s verified (%d questions, sha256 %s)",
                 config["manifest"]["path"], len(manifest), manifest_sha256)
