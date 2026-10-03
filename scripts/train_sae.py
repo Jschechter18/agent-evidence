@@ -1,3 +1,8 @@
+"""
+python scripts/train_sae.py --run-name natural_4b_layer_scan --layer 33
+"""
+
+
 import argparse
 from dataclasses import asdict
 from pathlib import Path
@@ -20,7 +25,7 @@ from mas_sae.sae.callbacks.early_stopping import EarlyStoppingCallback
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-name", required=True)
+    parser.add_argument("--run-name", type=str, default= "natural_4b_layer_scan")
     parser.add_argument("--layer", type=int, required=True)
     args = parser.parse_args()
 
