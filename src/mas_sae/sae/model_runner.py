@@ -76,6 +76,7 @@ class ModelRunner:
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
+                self.model.normalize_decoder_weights()
                 
             running_loss += loss.item()
             

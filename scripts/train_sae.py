@@ -96,7 +96,6 @@ def main():
         ).to(device)
         
         optimizer = torch.optim.Adam(model.parameters(), lr=hp.lr)
-        # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=hp.lr_patience, gamma=0.1)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode="min",
@@ -115,7 +114,6 @@ def main():
             val_loss = runner.val_epoch(val_dataloader)
             print(f"Epoch {epoch+1}/{hp.epochs} - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}")
             
-            # scheduler.step()
             scheduler.step(val_loss)
             checkpoint_evaluator.on_validation_end(train_loss, val_loss, epoch,
                                                    model, optimizer, scheduler)

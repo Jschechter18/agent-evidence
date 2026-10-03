@@ -18,6 +18,7 @@ class SparseAutoencoder(nn.Module):
         self.decoder_layer = nn.Sequential(
             nn.Linear(latent_dim, self.output_dim)
         )
+        self.normalize_decoder_weights()
         
     def encoder(self, activation: Tensor) -> Tensor:
         """Encoder layer of model. Used to convert activation to sparse feature vector.
@@ -49,6 +50,13 @@ class SparseAutoencoder(nn.Module):
             Reconstructed activation vector. This is the reconstructed version of the original activation vector from the sparse feature representation.
         """
         return self.decoder_layer(sparse_features)
+    
+    @torch.no_grad()
+    def normalize_decoder_weights(self):
+        """Normalize each decoder column to prevent sparsity-penalty scaling."""
+        decoder_weight = self.decoder_layer[0].weight
+        norms = torch.linalg.vector_norm(decoder_weight, dim=0, keepdim=True).clamp_min(1e-8)
+        self.decoder_layer[0].weight.data = decoder_weight / norms
     
     def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
         """Full forward pass through model.
