@@ -159,6 +159,20 @@ Run metadata and reproducibility information are saved under:
 
 This directory contains interactions.jsonl, resolved_config.yaml, and summary.json.
 
+## SAE versions
+
+After each successful `scripts/train_sae.py` run, a row is appended to
+`results/sae/musique/runs/layer_<N>/sae_versions.csv`. Columns are `run_id`,
+`checkpoint_path` (relative to the repository root), `commit`, `test_score`,
+and `best_val_score`. Scores are reconstruction MSE plus the sparsity penalty;
+lower is better. Missing test scores are written as literal `null`.
+
+The checkpoint path points to `best_checkpoint.pt`, and test evaluation, when
+available, uses that checkpoint. Repeating an append for the same run ID leaves
+the existing row unchanged. Later evaluation of an existing version requires
+updating its row rather than appending a new version. CSV appends use a file lock
+on Linux/macOS so simultaneous runs do not duplicate headers or lose rows.
+
 ## Testing
 
 After activating the Conda environment and installing the project, run:

@@ -11,7 +11,7 @@ class Hyperparameters:
     hidden_dim: int = 8
     latent_dim: int = 12888
     
-    patience: int = 5
-    lr_patience: int = 2
+    patience: int = 20
+    lr_patience: int = 10
 
     sparsity_coefficient: float = 1e-3

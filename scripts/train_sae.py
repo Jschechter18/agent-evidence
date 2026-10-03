@@ -10,6 +10,7 @@ from pathlib import Path
 import torch
 
 from mas_sae.experiments.artifacts import (
+    append_sae_version,
     create_sae_run_directory,
     update_run_manifest,
     write_run_config,
@@ -95,7 +96,13 @@ def main():
         ).to(device)
         
         optimizer = torch.optim.Adam(model.parameters(), lr=hp.lr)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=hp.lr_patience, gamma=0.1)
+        # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=hp.lr_patience, gamma=0.1)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            patience=hp.lr_patience,
+            factor=0.1,
+        )
         
         runner = ModelRunner(model, sparsity_coefficient=hp.sparsity_coefficient, optimizer=optimizer)
         
@@ -108,7 +115,8 @@ def main():
             val_loss = runner.val_epoch(val_dataloader)
             print(f"Epoch {epoch+1}/{hp.epochs} - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}")
             
-            scheduler.step()
+            # scheduler.step()
+            scheduler.step(val_loss)
             checkpoint_evaluator.on_validation_end(train_loss, val_loss, epoch,
                                                    model, optimizer, scheduler)
             epoch_history.append({"epoch": epoch+1, "train_loss": train_loss, "val_loss": val_loss})
@@ -118,7 +126,14 @@ def main():
                 print(f"Early stopping after epoch {epoch+1}")
                 break
         
+        test_loss = None
         if test_dataloader is not None:
+            checkpoint = torch.load(
+                run_directory / "checkpoints" / "best_checkpoint.pt",
+                map_location=device,
+                weights_only=True,
+            )
+            model.load_state_dict(checkpoint["model_state_dict"])
             test_loss = runner.test(test_dataloader)
             print(f"Test Loss: {test_loss:.4f}")
 
@@ -137,6 +152,12 @@ def main():
         raise
     
     update_run_manifest(run_directory, status="completed")
+    append_sae_version(
+        run_directory,
+        project_root=PROJECT_ROOT,
+        best_val_score=checkpoint_evaluator.best_loss,
+        test_score=test_loss,
+    )
     
 if __name__ == "__main__":
     main()

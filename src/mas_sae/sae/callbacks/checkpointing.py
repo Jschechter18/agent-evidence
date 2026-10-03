@@ -7,7 +7,7 @@ class CheckpointEvaluatorCallback:
         self.best_loss = float("inf")
     
     def on_validation_end(self, train_loss: float, val_loss: float, epoch: int,
-                          model: torch.nn.Module, optimizer: torch.optim.Optimizer, scheduler: torch.optim.lr_scheduler.StepLR):
+                          model: torch.nn.Module, optimizer: torch.optim.Optimizer, scheduler: torch.optim.lr_scheduler.ReduceLROnPlateau):
         """Evaluate the model checkpoint at the end of a validation epoch and save it if it has the best validation loss so far.
 
 

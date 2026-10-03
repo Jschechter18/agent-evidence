@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import csv
+import fcntl
 import hashlib
 import json
 from importlib.metadata import PackageNotFoundError, version
@@ -200,3 +202,48 @@ def write_run_history(
 ) -> None:
     """Write the training history for a run."""
     write_json_atomic(run_directory / "history.json", {"history": history, "test_loss": test_loss})
+
+
+def append_sae_version(
+    run_directory: Path,
+    *,
+    project_root: Path,
+    best_val_score: float,
+    test_score: float | None = None,
+) -> Path:
+    """Append a completed run once to its layer's CSV (scores are SAE losses).
+
+    Paths are relative to project_root. An existing run_id is left unchanged;
+    later evaluation of that same version must explicitly update its row.
+    """
+    manifest = json.loads((run_directory / "manifest.json").read_text())
+    if manifest["status"] != "completed":
+        raise ValueError("Only completed SAE runs can be appended.")
+    checkpoint = run_directory / "checkpoints" / "best_checkpoint.pt"
+    if not checkpoint.is_file():
+        raise FileNotFoundError(checkpoint)
+    fields = ["run_id", "checkpoint_path", "commit", "test_score", "best_val_score"]
+    row = {
+        "run_id": manifest["run_id"],
+        "checkpoint_path": checkpoint.resolve().relative_to(project_root.resolve()).as_posix(),
+        "commit": manifest["git_commit"],
+        "test_score": "null" if test_score is None else test_score,
+        "best_val_score": best_val_score,
+    }
+    csv_path = run_directory.parent / "sae_versions.csv"
+    with csv_path.open("a+", newline="", encoding="utf-8") as file:
+        # Serialize the duplicate check and append for concurrent training runs.
+        fcntl.flock(file.fileno(), fcntl.LOCK_EX)
+        file.seek(0)
+        reader = csv.DictReader(file)
+        if reader.fieldnames is not None and reader.fieldnames != fields:
+            raise ValueError(f"Unexpected SAE version CSV columns: {csv_path}")
+        if any(existing["run_id"] == row["run_id"] for existing in reader):
+            return csv_path
+        file.seek(0, 2)
+        writer = csv.DictWriter(file, fieldnames=fields)
+        if file.tell() == 0:
+            writer.writeheader()
+        writer.writerow(row)
+        file.flush()
+    return csv_path

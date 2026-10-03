@@ -1,3 +1,4 @@
+import csv
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -179,3 +180,51 @@ def test_sha256_helpers_are_canonical(tmp_path) -> None:
     path = tmp_path / "file.txt"
     path.write_bytes("é".encode("utf-8"))
     assert artifacts.sha256_file(path) == artifacts.sha256_text("é")
+
+
+def make_completed_sae_run(root, run_id, layer=33):
+    run = root / "runs" / f"layer_{layer:02d}" / run_id
+    (run / "checkpoints").mkdir(parents=True)
+    (run / "checkpoints" / "best_checkpoint.pt").touch()
+    (run / "manifest.json").write_text(json.dumps({
+        "run_id": run_id, "git_commit": "abc123", "status": "completed",
+    }))
+    return run
+
+
+def test_append_sae_versions_creates_appends_and_deduplicates(tmp_path):
+    first = make_completed_sae_run(tmp_path, "first")
+    second = make_completed_sae_run(tmp_path, "second")
+    path = artifacts.append_sae_version(first, project_root=tmp_path, best_val_score=2.5)
+    artifacts.append_sae_version(second, project_root=tmp_path, best_val_score=1.5, test_score=1.8)
+    before = path.read_bytes()
+    artifacts.append_sae_version(first, project_root=tmp_path, best_val_score=2.5)
+    assert path.read_bytes() == before
+    with path.open(newline="") as file:
+        rows = list(csv.DictReader(file))
+    assert rows == [
+        {"run_id": "first", "checkpoint_path": "runs/layer_33/first/checkpoints/best_checkpoint.pt",
+         "commit": "abc123", "test_score": "null", "best_val_score": "2.5"},
+        {"run_id": "second", "checkpoint_path": "runs/layer_33/second/checkpoints/best_checkpoint.pt",
+         "commit": "abc123", "test_score": "1.8", "best_val_score": "1.5"},
+    ]
+    other = make_completed_sae_run(tmp_path, "third", layer=17)
+    other_path = artifacts.append_sae_version(other, project_root=tmp_path, best_val_score=3.0)
+    assert other_path.parent.name == "layer_17"
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("invalid", ["failed", "running", "missing_checkpoint"])
+def test_append_sae_version_rejects_unavailable_versions(tmp_path, invalid):
+    run = make_completed_sae_run(tmp_path, "first")
+    if invalid == "missing_checkpoint":
+        (run / "checkpoints" / "best_checkpoint.pt").unlink()
+        error = FileNotFoundError
+    else:
+        manifest = json.loads((run / "manifest.json").read_text())
+        manifest["status"] = invalid
+        (run / "manifest.json").write_text(json.dumps(manifest))
+        error = ValueError
+    with pytest.raises(error):
+        artifacts.append_sae_version(run, project_root=tmp_path, best_val_score=2.5)
+    assert not (run.parent / "sae_versions.csv").exists()
