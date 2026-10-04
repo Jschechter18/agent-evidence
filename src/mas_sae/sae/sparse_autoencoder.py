@@ -11,6 +11,9 @@ class SparseAutoencoder(nn.Module):
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
         
+        self.input_scale: Tensor
+        self.register_buffer("input_scale", torch.tensor(1.0))
+        
         self.encoder_layer = nn.Sequential(
             nn.Linear(input_dim, latent_dim),
             nn.ReLU()
@@ -33,7 +36,7 @@ class SparseAutoencoder(nn.Module):
         Tensor
             Sparse feature vector. This is a sparse representation of the activation input.
         """
-        return self.encoder_layer(activation)
+        return self.encoder_layer(activation / self.input_scale)
         
     
     def decoder(self, sparse_features: Tensor) -> Tensor:
@@ -49,7 +52,7 @@ class SparseAutoencoder(nn.Module):
         Tensor
             Reconstructed activation vector. This is the reconstructed version of the original activation vector from the sparse feature representation.
         """
-        return self.decoder_layer(sparse_features)
+        return self.decoder_layer(sparse_features) * self.input_scale
     
     @torch.no_grad()
     def normalize_decoder_weights(self):

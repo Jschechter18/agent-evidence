@@ -18,7 +18,7 @@ from mas_sae.experiments.artifacts import (
 )
 from mas_sae.sae.hyperparamters import Hyperparameters as HP
 from mas_sae.sae.sparse_autoencoder import SparseAutoencoder as SAE
-from mas_sae.sae.dataloader import create_sae_dataloader
+from mas_sae.sae.dataloader import ActivationDataset, create_sae_dataloader
 from mas_sae.sae.model_runner import ModelRunner
 from mas_sae.sae.callbacks.checkpointing import CheckpointEvaluatorCallback
 from mas_sae.sae.callbacks.early_stopping import EarlyStoppingCallback
@@ -94,6 +94,17 @@ def main():
             hidden_dim=hp.hidden_dim,
             latent_dim=hp.latent_dim,
         ).to(device)
+        
+        assert isinstance(train_dataloader.dataset, ActivationDataset)
+        
+        train_activations = train_dataloader.dataset.activations
+        activation_rms_scale = train_activations.float().square().mean().sqrt()
+
+        if not torch.isfinite(activation_rms_scale) or activation_rms_scale <= 0:
+            raise ValueError("Training activations must have a finite, positive RMS.")
+
+        with torch.no_grad():
+            model.input_scale.copy_(activation_rms_scale)
         
         optimizer = torch.optim.Adam(model.parameters(), lr=hp.lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(

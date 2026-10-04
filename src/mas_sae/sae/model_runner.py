@@ -18,9 +18,10 @@ class ModelRunner:
     
     
     def _loss_fn(self, reconstructed: torch.Tensor, batch: torch.Tensor, sparse_features: torch.Tensor):
-        rec_loss = F.mse_loss(reconstructed, batch)
+        scale = self.model.input_scale
+        rec_loss = F.mse_loss(reconstructed / scale, batch / scale)
         sparsity_loss = sparse_features.abs().mean()
-        
+
         return rec_loss + self.sparsity_coefficient * sparsity_loss
     
     def _common(self, batch: torch.Tensor):
