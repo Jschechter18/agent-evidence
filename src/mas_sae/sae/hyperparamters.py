@@ -5,6 +5,7 @@ class Hyperparameters:
     seed: int = 42
     epochs: int = 200
     batch_size: int = 256
+    train_shuffle: bool = True
     
     lr: float = 3e-4
     

@@ -68,6 +68,7 @@ def main():
             split="train",
             num_workers=2,
             location=ACTIVATION_LOCATION,
+            shuffle=hp.train_shuffle,
         )
         val_dataloader = create_sae_dataloader(
             hp.batch_size,
@@ -124,7 +125,6 @@ def main():
             "reconstruction_loss": "Mean squared error in RMS-normalized units over examples and input dimensions.",
             "sparsity_loss": "Mean absolute latent activation over examples and features.",
             "total_loss": "reconstruction_loss + sparsity_coefficient * sparsity_loss",
-            "train_shuffle": False,
         })
         write_run_config(run_directory, config)
         
