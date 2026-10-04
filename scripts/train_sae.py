@@ -2,7 +2,6 @@
 python scripts/train_sae.py --run-name natural_4b_layer_scan --layer 33
 """
 
-
 import argparse
 from dataclasses import asdict
 from pathlib import Path
@@ -14,8 +13,10 @@ from mas_sae.experiments.artifacts import (
     create_sae_run_directory,
     update_run_manifest,
     write_run_config,
+    write_sae_provenance,
     write_run_history
 )
+from mas_sae.experiments.reproducibility import seed_everything
 from mas_sae.sae.hyperparamters import Hyperparameters as HP
 from mas_sae.sae.sparse_autoencoder import SparseAutoencoder as SAE
 from mas_sae.sae.dataloader import ActivationDataset, create_sae_dataloader
@@ -42,6 +43,7 @@ def main():
     subdirectories = ("checkpoints",)
     
     hp = HP()
+    seed_everything(hp.seed)
     
     run_directory = create_sae_run_directory(
         run_name=f"sae-l{hp.latent_dim}",
@@ -51,6 +53,14 @@ def main():
     )
     
     try:
+        activation_files = {
+            split: ACTIVATION_LOCATION / f"{split}.pt"
+            for split in ("train", "validation")
+        }
+        if (ACTIVATION_LOCATION / "test.pt").is_file():
+            activation_files["test"] = ACTIVATION_LOCATION / "test.pt"
+        write_sae_provenance(run_directory, activation_files)
+
         train_dataloader = create_sae_dataloader(
             hp.batch_size,
             split="train",
@@ -81,8 +91,6 @@ def main():
             "activation_run_name": args.run_name,
         }
 
-        write_run_config(run_directory, config)
-        
         device = torch.device(
             "cuda" if torch.cuda.is_available()
             else "mps" if torch.backends.mps.is_available()
@@ -105,6 +113,18 @@ def main():
 
         with torch.no_grad():
             model.input_scale.copy_(activation_rms_scale)
+
+        config.update({
+            "activation_rms_scale": activation_rms_scale.item(),
+            "input_normalization": "Divide by one RMS over all training activation elements; reuse for every split.",
+            "decoder_output": "Multiply reconstruction by the training RMS to restore original units.",
+            "decoder_normalization": "Unit L2 norm per column at initialization and after each optimizer step.",
+            "reconstruction_loss": "Mean squared error in RMS-normalized units over examples and input dimensions.",
+            "sparsity_loss": "Mean absolute latent activation over examples and features.",
+            "total_loss": "reconstruction_loss + sparsity_coefficient * sparsity_loss",
+            "train_shuffle": False,
+        })
+        write_run_config(run_directory, config)
         
         optimizer = torch.optim.Adam(model.parameters(), lr=hp.lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -120,6 +140,7 @@ def main():
         early_stopping = EarlyStoppingCallback(hp.patience)
         
         epoch_history = []
+        stop_reason = "max_epochs"
         for epoch in range(hp.epochs):
             train_metrics = runner.train_epoch(train_dataloader)
             val_metrics = runner.val_epoch(val_dataloader)
@@ -130,6 +151,7 @@ def main():
                                                    model, optimizer, scheduler)
             epoch_history.append({
                 "epoch": epoch+1,
+                "learning_rate": optimizer.param_groups[0]["lr"],  # After scheduler.step(); used for the next epoch.
                 "train_loss": train_metrics["loss"],
                 "val_loss": val_metrics["loss"],
                 "train_rec_loss": train_metrics["rec_loss"],
@@ -145,6 +167,7 @@ def main():
             write_run_history(run_directory, epoch_history)
             
             if early_stopping.on_validation_end(val_metrics["loss"]):
+                stop_reason = "early_stopping"
                 print(f"Early stopping after epoch {epoch+1}")
                 break
         
@@ -158,12 +181,29 @@ def main():
             model.load_state_dict(checkpoint["model_state_dict"])
             test_metrics = runner.test(test_dataloader)
             print(f"Test Loss: {test_metrics['loss']:.4f}")
+        
+        best_epoch_metrics = min(epoch_history, key=lambda metrics: metrics["val_loss"])
+                            
+        summary = {
+            "epochs_completed": len(epoch_history),
+            "stop_reason": stop_reason,
+            "best_epoch": best_epoch_metrics["epoch"],
+            "best_val_metrics":
+                {
+                    "loss": best_epoch_metrics["val_loss"],
+                    "rec_loss": best_epoch_metrics["val_rec_loss"],
+                    "weighted_sparsity_loss": best_epoch_metrics["val_weighted_sparsity_loss"],
+                    "mean_active_features": best_epoch_metrics["val_mean_active_features"],
+                    "inactive_feature_fraction": best_epoch_metrics["val_inactive_feature_fraction"],
+                }
+        }
 
-            write_run_history(
-                run_directory,
-                epoch_history,
-                test_loss=test_metrics["loss"],
-            )
+        write_run_history(
+            run_directory,
+            epoch_history,
+            test_loss=test_metrics["loss"] if test_metrics is not None else None,
+            summary=summary,
+        )
         
     except (Exception, KeyboardInterrupt) as error:
         update_run_manifest(

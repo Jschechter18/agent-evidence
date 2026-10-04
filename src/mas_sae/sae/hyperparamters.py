@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Hyperparameters:
+    seed: int = 42
     epochs: int = 200
     batch_size: int = 256
     
