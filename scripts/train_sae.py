@@ -11,6 +11,7 @@ import torch
 from mas_sae.experiments.artifacts import (
     append_sae_version,
     create_sae_run_directory,
+    get_git_provenance,
     update_run_manifest,
     write_run_config,
     write_sae_provenance,
@@ -45,6 +46,7 @@ def main():
     hp = HP()
     seed_everything(hp.seed)
     
+    git_provenance = get_git_provenance()
     run_directory = create_sae_run_directory(
         run_name=f"sae-l{hp.latent_dim}",
         layer=args.layer,
@@ -59,7 +61,7 @@ def main():
         }
         if (ACTIVATION_LOCATION / "test.pt").is_file():
             activation_files["test"] = ACTIVATION_LOCATION / "test.pt"
-        write_sae_provenance(run_directory, activation_files)
+        write_sae_provenance(run_directory, activation_files, git_provenance)
 
         train_dataloader = create_sae_dataloader(
             hp.batch_size,

@@ -96,29 +96,38 @@ def sha256_file(path: str | Path) -> str:
         return hashlib.file_digest(file, "sha256").hexdigest()
 
 
-def write_sae_provenance(run_directory: Path, activation_files: dict[str, Path]) -> None:
-    """Record input identities and the working tree before training starts."""
-    manifest_path = run_directory / "manifest.json"
-    manifest = json.loads(manifest_path.read_text())
-    manifest["activation_files"] = {
-        split: {"path": str(path.resolve()), "sha256": sha256_file(path)}
-        for split, path in activation_files.items()
-    }
+def get_git_provenance() -> dict[str, object]:
+    """Snapshot the working tree before creating any run artifacts."""
     try:
         status = subprocess.run(
             ["git", "status", "--porcelain", "--untracked-files=all"],
             check=True, capture_output=True, text=True,
         ).stdout
         diff = get_git_diff()
-        manifest.update({
+        return {
             "git_dirty": bool(status.strip()),
             "git_status": status,
             "git_diff": diff.decode("utf-8", errors="replace"),
             "git_diff_sha256": hashlib.sha256(diff).hexdigest(),
             "git_diff_scope": "Staged and unstaged tracked changes relative to HEAD; untracked contents excluded.",
-        })
+        }
     except (OSError, subprocess.CalledProcessError, RuntimeError):
-        manifest["git_dirty"] = None
+        return {"git_dirty": None}
+
+
+def write_sae_provenance(
+    run_directory: Path,
+    activation_files: dict[str, Path],
+    git_provenance: dict[str, object],
+) -> None:
+    """Record input identities and the previously captured working tree."""
+    manifest_path = run_directory / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest.update(git_provenance)
+    manifest["activation_files"] = {
+        split: {"path": str(path.resolve()), "sha256": sha256_file(path)}
+        for split, path in activation_files.items()
+    }
     write_json_atomic(manifest_path, manifest)
 
 

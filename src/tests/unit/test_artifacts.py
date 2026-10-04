@@ -1,11 +1,41 @@
 import csv
 import json
+import subprocess
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from mas_sae.experiments import artifacts
+
+
+@pytest.mark.parametrize("dirty", [False, True])
+def test_sae_provenance_preserves_status_before_run_creation(tmp_path, monkeypatch, dirty):
+    monkeypatch.chdir(tmp_path)
+    subprocess.run(["git", "init", "-q"], check=True)
+    activation_path = tmp_path / "train.pt"
+    activation_path.write_bytes(b"original activations")
+    subprocess.run(["git", "add", "train.pt"], check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-qm", "Initial inputs"],
+        check=True,
+    )
+    if dirty:
+        activation_path.write_bytes(b"changed activations")
+
+    snapshot = artifacts.get_git_provenance()
+    run = artifacts.create_sae_run_directory("test", 33, results_root=tmp_path / "results")
+    # The unignored run files dirty the repository, but must not alter its saved snapshot.
+    assert artifacts.get_git_provenance()["git_dirty"] is True
+    artifacts.write_sae_provenance(run, {"train": activation_path}, snapshot)
+
+    manifest = json.loads((run / "manifest.json").read_text())
+    assert manifest["git_dirty"] is dirty
+    assert "results/" not in manifest["git_status"]
+    assert manifest["git_diff"] == snapshot["git_diff"]
+    assert bool(manifest["git_diff"]) is dirty
+    assert manifest["activation_files"]["train"]["sha256"] == artifacts.sha256_file(activation_path)
 
 
 def test_build_run_id_uses_timestamp_and_short_commit() -> None:
