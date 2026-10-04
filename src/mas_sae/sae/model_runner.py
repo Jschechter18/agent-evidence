@@ -20,9 +20,18 @@ class ModelRunner:
     def _loss_fn(self, reconstructed: torch.Tensor, batch: torch.Tensor, sparse_features: torch.Tensor):
         scale = self.model.input_scale
         rec_loss = F.mse_loss(reconstructed / scale, batch / scale)
-        sparsity_loss = sparse_features.abs().mean()
+        
+        l1_penalty = sparse_features.abs().mean()
+        weighted_sparsity_loss = self.sparsity_coefficient * l1_penalty
+        
+        loss = rec_loss + weighted_sparsity_loss
+        
+        return {
+            "loss": loss,
+            "rec_loss": rec_loss,
+            "weighted_sparsity_loss": weighted_sparsity_loss
+        }
 
-        return rec_loss + self.sparsity_coefficient * sparsity_loss
     
     def _common(self, batch: torch.Tensor):
         """Run a single forward pass and compute the loss.
@@ -42,9 +51,13 @@ class ModelRunner:
         
         sparse_features, reconstructed = self.model(activations)
         
-        loss = self._loss_fn(reconstructed, activations, sparse_features)
-        
-        return loss, reconstructed, sparse_features
+        losses = self._loss_fn(reconstructed, activations, sparse_features)
+
+        return {'loss': losses["loss"],
+                'rec_loss': losses["rec_loss"],
+                'weighted_sparsity_loss': losses['weighted_sparsity_loss'],
+                'reconstructed': reconstructed,
+                'sparse_features': sparse_features}
     
     def _run_epoch(self, dataloader: DataLoader, training_mode: bool = False):
         """Run a single epoch for any evaluation mode.
@@ -62,28 +75,52 @@ class ModelRunner:
             The average loss over the epoch.
         """
         running_loss = 0
+        running_rec_loss = 0
+        running_weighted_sparsity_loss = 0
+        running_active_counts = 0
+        num_examples = 0
+        
+        features_seen = torch.zeros(
+            self.model.latent_dim,
+            dtype=torch.bool,
+            device=next(self.model.parameters()).device,
+        )
         
         self.model.train() if training_mode else self.model.eval()
         
         description = "Training" if training_mode else "Evaluating"
         progress_bar = tqdm(dataloader, desc=description, leave=False)
         
-        # for batch in dataloader:
         for _, batch in enumerate(progress_bar, start=1):
             with torch.set_grad_enabled(training_mode):
-                loss, _, _ = self._common(batch)
+                outputs = self._common(batch)
+                
+                active_in_batch = (outputs["sparse_features"] > 0).any(dim=0)
+                features_seen |= active_in_batch # or = operator
             
             if training_mode:
                 self.optimizer.zero_grad()
-                loss.backward()
+                outputs['loss'].backward()
                 self.optimizer.step()
                 self.model.normalize_decoder_weights()
                 
-            running_loss += loss.item()
+            batch_size = batch.shape[0]
+            running_loss += outputs['loss'].item() * batch_size
+            running_rec_loss += outputs['rec_loss'].item() * batch_size
+            running_weighted_sparsity_loss += outputs['weighted_sparsity_loss'].item() * batch_size
+            running_active_counts += (outputs['sparse_features'] > 0).sum().item()
+            num_examples += batch_size
             
-        final_loss = running_loss / len(dataloader)
-        
-        return final_loss
+        if num_examples == 0:
+            raise ValueError("Cannot evaluate an empty dataset.")
+
+        return {
+            "loss": running_loss / num_examples,
+            "rec_loss": running_rec_loss / num_examples,
+            "weighted_sparsity_loss": running_weighted_sparsity_loss / num_examples,
+            "mean_active_features": running_active_counts / num_examples,
+            "inactive_feature_fraction": (~features_seen).float().mean().item(),
+        }
     
     def train_epoch(self, dataloader: DataLoader):
         """Runs one epoch under full training conditions.
@@ -113,7 +150,7 @@ class ModelRunner:
         float
             The average loss over the epoch.
         """
-        return self._run_epoch(dataloader)
+        return self._run_epoch(dataloader, training_mode=False)
     
     def test(self, dataloader: DataLoader):
         """Runs one full forward pass under full test conditions.
@@ -128,4 +165,4 @@ class ModelRunner:
         float
             The average loss over the epoch.
         """
-        return self._run_epoch(dataloader)
+        return self._run_epoch(dataloader, training_mode=False)

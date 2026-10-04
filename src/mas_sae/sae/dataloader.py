@@ -28,7 +28,7 @@ def create_sae_dataloader(
     batch_size: int,
     split: str,
     num_workers: int,
-    shuffle: bool = False,
+    shuffle: bool = True,
     location: str | Path | None = None,
 ) -> DataLoader:
     """Dataloader helper function to construct and return the dataloader for any given split.
@@ -42,7 +42,7 @@ def create_sae_dataloader(
     num_workers : int
         Number of cpu cores to load the data.
     shuffle : bool, optional
-        Whether to shuffle the dataset, by default False.
+        Whether to shuffle the dataset, by default True.
     location : str | Path | None, optional
         Directory containing <split>.pt, for example
         data/activations/pilot_12q/layer_17.

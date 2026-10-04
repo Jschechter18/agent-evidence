@@ -77,8 +77,8 @@ def main():
         
         config = {
             **asdict(hp),
-        "layer": args.layer,
-        "activation_run_name": args.run_name,
+            "layer": args.layer,
+            "activation_run_name": args.run_name,
         }
 
         write_run_config(run_directory, config)
@@ -121,21 +121,34 @@ def main():
         
         epoch_history = []
         for epoch in range(hp.epochs):
-            train_loss = runner.train_epoch(train_dataloader)
-            val_loss = runner.val_epoch(val_dataloader)
-            print(f"Epoch {epoch+1}/{hp.epochs} - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}")
+            train_metrics = runner.train_epoch(train_dataloader)
+            val_metrics = runner.val_epoch(val_dataloader)
+            print(f"Epoch {epoch+1}/{hp.epochs} - Train Loss: {train_metrics['loss']:.4f} - Val Loss: {val_metrics['loss']:.4f}")
             
-            scheduler.step(val_loss)
-            checkpoint_evaluator.on_validation_end(train_loss, val_loss, epoch,
+            scheduler.step(val_metrics["loss"])
+            checkpoint_evaluator.on_validation_end(train_metrics, val_metrics, epoch,
                                                    model, optimizer, scheduler)
-            epoch_history.append({"epoch": epoch+1, "train_loss": train_loss, "val_loss": val_loss})
+            epoch_history.append({
+                "epoch": epoch+1,
+                "train_loss": train_metrics["loss"],
+                "val_loss": val_metrics["loss"],
+                "train_rec_loss": train_metrics["rec_loss"],
+                "val_rec_loss": val_metrics["rec_loss"],
+                "train_weighted_sparsity_loss": train_metrics["weighted_sparsity_loss"],
+                "train_mean_active_features": train_metrics["mean_active_features"],
+                "val_mean_active_features": val_metrics["mean_active_features"],
+                "val_weighted_sparsity_loss": val_metrics["weighted_sparsity_loss"],
+                "train_inactive_feature_fraction": train_metrics["inactive_feature_fraction"],
+                "val_inactive_feature_fraction": val_metrics["inactive_feature_fraction"],
+                })
+            
             write_run_history(run_directory, epoch_history)
             
-            if early_stopping.on_validation_end(val_loss):
+            if early_stopping.on_validation_end(val_metrics["loss"]):
                 print(f"Early stopping after epoch {epoch+1}")
                 break
         
-        test_loss = None
+        test_metrics = None
         if test_dataloader is not None:
             checkpoint = torch.load(
                 run_directory / "checkpoints" / "best_checkpoint.pt",
@@ -143,13 +156,13 @@ def main():
                 weights_only=True,
             )
             model.load_state_dict(checkpoint["model_state_dict"])
-            test_loss = runner.test(test_dataloader)
-            print(f"Test Loss: {test_loss:.4f}")
+            test_metrics = runner.test(test_dataloader)
+            print(f"Test Loss: {test_metrics['loss']:.4f}")
 
             write_run_history(
                 run_directory,
                 epoch_history,
-                test_loss=test_loss,
+                test_loss=test_metrics["loss"],
             )
         
     except (Exception, KeyboardInterrupt) as error:
@@ -165,7 +178,7 @@ def main():
         run_directory,
         project_root=PROJECT_ROOT,
         best_val_score=checkpoint_evaluator.best_loss,
-        test_score=test_loss,
+        test_score=test_metrics["loss"] if test_metrics is not None else None
     )
     
 if __name__ == "__main__":
