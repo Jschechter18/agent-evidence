@@ -1,0 +1,61 @@
+# Full Natural-condition 4B activation collection: MuSiQue train (19,938).
+# Pairs with natural_4b_full_validation.yaml under the same run_name, so
+# train.pt and validation.pt share one activation directory (v1 convention).
+# Gemma-3-12B BF16 does not fit the single A10G, so this uses the validated
+# 4B Gemma/Qwen pair (see natural_4b_smoke_10q_solver64 for the 64-token
+# Solver budget evidence). Resumable: rerun with --resume after interruption.
+#
+# experiment_split (60/20/20) is question-level metadata, not a physical
+# activation split; whether SAE/probe fitting excludes a label is decided
+# downstream from the saved labels.
+#
+# sampling.strategy random over all 19,938 questions selects the whole split
+# in a seeded shuffled order. The pinned train split is stored grouped by hop
+# (~14k 2-hop first), so dataset order would make any partial run 2-hop only.
+
+roles:
+  solver:
+    id: google/gemma-3-4b-it
+    revision: 093f9f388b31de276ce2de164bdc2081324b9767
+    loader: gemma3
+    dtype: bfloat16
+    device: cuda:0
+    generation: {max_new_tokens: 64, do_sample: false}
+
+  critic:
+    id: Qwen/Qwen3-4B-Instruct-2507
+    revision: cdbee75f17c01a7cc42f958dc650907174af0554
+    loader: qwen3
+    dtype: bfloat16
+    device: cuda:0
+    generation: {max_new_tokens: 256, do_sample: false}
+
+  validator:
+    id: google/gemma-3-4b-it
+    revision: 093f9f388b31de276ce2de164bdc2081324b9767
+    loader: gemma3
+    dtype: bfloat16
+    device: cuda:0
+    generation: {max_new_tokens: 4, do_sample: false}
+
+dataset:
+  revision: c8f4f8c9465fb69d31a8eae894c3fd509c4ca321
+  source_split: train
+  num_questions: 19938
+  sampling:
+    strategy: random
+  experiment_split:
+    proportions:
+      discovery: 0.6
+      validation: 0.2
+      intervention: 0.2
+
+collection:
+  protocol_version: v2
+  active_conditions: [natural]
+  layers: [8, 17, 25, 33]
+  seed: 42
+
+output:
+  run_name: natural_4b_full
+  chunk_size: 250

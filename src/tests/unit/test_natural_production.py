@@ -192,9 +192,9 @@ def test_collection_script_rejects_bad_solver_sites_before_generation(monkeypatc
               "collection": {"layers": [0], "seed": 42, "active_conditions": ["natural"]},
               "output": {"run_name": "unused"}}
     model = SimpleNamespace(config=SimpleNamespace(model_type="unsupported"))
-    monkeypatch.setattr(script, "parse_args", lambda: SimpleNamespace(config="unused"))
+    monkeypatch.setattr(script, "parse_args", lambda: SimpleNamespace(config="unused", resume=False))
     monkeypatch.setattr(script, "load_collection_config", lambda path: config)
-    monkeypatch.setattr(script, "ensure_output_available", lambda path: None)
+    monkeypatch.setattr(script.collection_progress, "ensure_can_start", lambda **kwargs: None)
     monkeypatch.setattr(script, "load_role_models", lambda specs: {role: (model, object()) for role in specs})
     collect = Mock(side_effect=AssertionError("Must not generate"))
     monkeypatch.setattr(script, "collect_examples", collect)

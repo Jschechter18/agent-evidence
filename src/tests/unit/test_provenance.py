@@ -196,3 +196,17 @@ def test_provenance_is_role_specific_and_serializable():
 def test_environment_metadata_without_git(monkeypatch):
     monkeypatch.setattr(provenance.subprocess, "run", Mock(side_effect=OSError("no git")))
     assert provenance.environment_metadata()["git_dirty"] is None
+
+
+def test_role_metadata_records_runtime_chat_template_kwargs():
+    spec = roles.resolve_role_spec("critic", {"id": "m", "loader": "qwen3", "revision": "r",
+                                              "dtype": "bfloat16", "device": "cpu",
+                                              "chat_template_kwargs": {"enable_thinking": False}},
+                                   default_max_new_tokens=8)
+    agent = Solver(SimpleNamespace(config=SimpleNamespace()), object())
+    assert provenance.role_metadata(agent)["chat_template_kwargs"] == {}
+    roles.configure_agent(agent, spec)
+    assert provenance.role_metadata(agent)["chat_template_kwargs"] == {"enable_thinking": False}
+    # the value actually applied at generation time is what gets recorded
+    agent.chat_template_kwargs = {}
+    assert provenance.role_metadata(agent)["chat_template_kwargs"] == {}

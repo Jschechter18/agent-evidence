@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -39,6 +40,58 @@ def get_git_commit() -> str:
         return "unknown"
 
 
+def get_git_diff_sha256() -> str:
+    """SHA-256 of staged and unstaged tracked changes relative to HEAD.
+
+    Untracked files are excluded. Raises instead of returning a placeholder,
+    because callers use it to refuse mixing two code states in one run.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--no-ext-diff", "--binary", "HEAD", "--"],
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise RuntimeError("Could not hash tracked git changes.") from error
+    return hashlib.sha256(result.stdout).hexdigest()
+
+
+def get_untracked_sha256(*paths: str) -> str:
+    """SHA-256 of untracked, non-ignored files under ``paths``: names and bytes.
+
+    Complements ``get_git_diff_sha256``, which cannot see new files that are
+    not yet committed.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z", "--", *paths],
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise RuntimeError("Could not list untracked files.") from error
+    digest = hashlib.sha256()
+    for name in sorted(filter(None, result.stdout.split(b"\0"))):
+        digest.update(name + b"\0" + hashlib.sha256(Path(name.decode()).read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def sha256_text(text: object) -> str:
+    """SHA-256 of a string encoded as UTF-8."""
+    return hashlib.sha256(str(text).encode("utf-8")).hexdigest()
+
+
+def sha256_json(value: object) -> str:
+    """SHA-256 of a JSON-serializable value in canonical form."""
+    return sha256_text(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")))
+
+
+def sha256_file(path: str | Path) -> str:
+    """SHA-256 of a file's exact bytes."""
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
 def get_package_version(package: str) -> str:
     """Return the installed version of a package when available."""
     try:
@@ -63,7 +116,8 @@ def ensure_output_available(output_dir: str | Path) -> None:
         )
 
 
-def _write_json(path: Path, data: dict[str, object]) -> None:
+def write_json_atomic(path: Path, data: dict[str, object]) -> None:
+    """Write JSON through a temporary file and rename it into place."""
     temporary_path = path.with_suffix(".json.tmp")
 
     with temporary_path.open("w", encoding="utf-8") as file:
@@ -109,7 +163,7 @@ def create_sae_run_directory(
         (run_directory / subdirectory).mkdir()
 
     manifest = build_manifest(run_id, run_name, layer, timestamp, git_commit)
-    _write_json(run_directory / "manifest.json", manifest)
+    write_json_atomic(run_directory / "manifest.json", manifest)
 
     return run_directory
 
@@ -119,7 +173,7 @@ def write_run_config(
     config: dict[str, object],
 ) -> None:
     """Write the resolved training configuration for a run."""
-    _write_json(run_directory / "config.json", config)
+    write_json_atomic(run_directory / "config.json", config)
 
 
 def update_run_manifest(
@@ -136,7 +190,7 @@ def update_run_manifest(
     manifest["updated_at"] = utc_now().isoformat()
     manifest["error_message"] = error_message
 
-    _write_json(manifest_path, manifest)
+    write_json_atomic(manifest_path, manifest)
 
 
 def write_run_history(
@@ -145,4 +199,4 @@ def write_run_history(
     test_loss: float | None = None
 ) -> None:
     """Write the training history for a run."""
-    _write_json(run_directory / "history.json", {"history": history, "test_loss": test_loss})
+    write_json_atomic(run_directory / "history.json", {"history": history, "test_loss": test_loss})

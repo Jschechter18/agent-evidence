@@ -1,0 +1,54 @@
+# 10-question smoke of the executable 4B Natural pipeline on one A10G.
+# Gemma-3-12B BF16 does not fit the available single A10G, so this smoke
+# uses the established 4B Gemma/Qwen pair. This is not a full-run scope decision.
+
+roles:
+  solver:
+    id: google/gemma-3-4b-it
+    revision: 093f9f388b31de276ce2de164bdc2081324b9767
+    loader: gemma3
+    dtype: bfloat16
+    device: cuda:0
+    generation: {max_new_tokens: 64, do_sample: false}
+
+  critic:
+    id: Qwen/Qwen3-4B-Instruct-2507
+    revision: cdbee75f17c01a7cc42f958dc650907174af0554
+    loader: qwen3
+    dtype: bfloat16
+    device: cuda:0
+    generation: {max_new_tokens: 256, do_sample: false}
+
+  validator:
+    id: google/gemma-3-4b-it
+    revision: 093f9f388b31de276ce2de164bdc2081324b9767
+    loader: gemma3
+    dtype: bfloat16
+    device: cuda:0
+    generation: {max_new_tokens: 4, do_sample: false}
+
+dataset:
+  revision: c8f4f8c9465fb69d31a8eae894c3fd509c4ca321
+  source_split: train
+  num_questions: 10
+  sampling:
+    strategy: stratified
+    hop_proportions:
+      2hop: 0.6
+      3hop: 0.3
+      4hop: 0.1
+  experiment_split:
+    proportions:
+      discovery: 0.6
+      validation: 0.2
+      intervention: 0.2
+
+collection:
+  protocol_version: v2
+  active_conditions: [natural]
+  layers: [8, 17, 25, 33]
+  seed: 42
+
+output:
+  run_name: natural_4b_resume_ref
+  chunk_size: 3

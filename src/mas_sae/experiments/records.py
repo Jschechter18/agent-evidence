@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,28 @@ def write_jsonl(
                 )
                 + "\n"
             )
+
+
+def append_jsonl(
+    path: str | Path,
+    row: dict[str, Any],
+) -> None:
+    """Append one record durably (flush and fsync) so restarts can trust it."""
+
+    output_path = Path(path)
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with output_path.open(
+        "a",
+        encoding="utf-8",
+    ) as file:
+        file.write(json.dumps(row, ensure_ascii=False) + "\n")
+        file.flush()
+        os.fsync(file.fileno())
 
 
 def read_jsonl(

@@ -11,6 +11,7 @@ from mas_sae.data.musique import (
     validate_proportions,
 )
 from mas_sae.experiments.conditions import OMITTED, resolve_conditions
+from mas_sae.experiments.reproducibility import validate_commit_revision
 from mas_sae.models.roles import resolve_roles
 
 
@@ -50,6 +51,7 @@ class ExperimentSplitConfig(TypedDict):
 class DatasetConfig(TypedDict):
     source_split: str
     num_questions: int
+    revision: NotRequired[str]
     sampling: NotRequired[SamplingConfig]
     experiment_split: NotRequired[ExperimentSplitConfig]
 
@@ -70,7 +72,14 @@ class CollectionSettings(TypedDict):
 
 
 class OutputConfig(TypedDict):
+    """Run naming and operational settings, excluded from the config hash.
+
+    ``chunk_size`` is how many questions are committed together during a
+    resumable collection; it does not affect results.
+    """
+
     run_name: str
+    chunk_size: NotRequired[int]
 
 
 class CollectionConfig(TypedDict):
@@ -119,6 +128,9 @@ def load_collection_config(path: str | Path) -> CollectionConfig:
             f"{sorted(SUPPORTED_SOURCE_SPLITS)}."
         )
 
+    if "revision" in dataset:
+        validate_commit_revision(dataset["revision"], "dataset")
+
     num_questions = dataset.get("num_questions")
     if type(num_questions) is not int or num_questions <= 0:
         raise ValueError(
@@ -163,6 +175,11 @@ def load_collection_config(path: str | Path) -> CollectionConfig:
     run_name = output.get("run_name")
     if not isinstance(run_name, str) or not run_name.strip():
         raise ValueError("output.run_name must be a non-empty string.")
+
+    if "chunk_size" in output and (
+        type(output["chunk_size"]) is not int or output["chunk_size"] <= 0
+    ):
+        raise ValueError("output.chunk_size must be a positive integer when provided.")
 
     return raw
 
