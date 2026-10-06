@@ -10,11 +10,11 @@ from mas_sae.evaluation.behavior_qc import (
 from mas_sae.evaluation.behavior_v01 import SOLVER_RESPONSES, classify_candidate
 
 
-def episode(number, a2, split="discovery"):
+def episode(number, a2, partition="train"):
     row = {"question_id": f"q{number}", "question": f"Question {number}?",
            "solver_attempt_1": "London", "critic_advocated_answer": "Paris",
            "critic_feedback": "The reviewer advocates: Paris", "solver_attempt_2": a2,
-           "critic_noncommittal": False, "canonical_split": split}
+           "critic_noncommittal": False, "partition": partition}
     row["label"] = classify_candidate(row)
     return row
 
@@ -28,13 +28,32 @@ def annotation(**values):
 def episodes():
     kept = [episode(n, "London") for n in range(3)]
     adopted = [episode(n, "Paris") for n in range(3, 60)]
-    held_out = [episode(n, "London", split="validation") for n in range(60, 70)]
+    held_out = [episode(n, "London", partition=partition)
+                for n, partition in zip(range(60, 72), ["validation", "test", "intervention"] * 4)]
     return kept + adopted + held_out
 
 
-def test_packet_takes_every_kept_case_and_only_discovery(episodes):
+def test_qc_never_takes_validation_test_or_intervention_rows(tmp_path, episodes):
     chosen, key, sampling = choose_qc_rows(episodes, seed=42)
-    assert all(row["canonical_split"] == "discovery" for row in chosen)
+    excluded = {row["question_id"] for row in episodes if row["partition"] != "train"}
+    assert excluded and not excluded & {row["question_id"] for row in chosen}
+    # Every 'kept A1' case outside train was left out even though kept cases are taken whole.
+    assert sampling["population"]["retained_a1"] == 3
+
+    paragraphs = {row["question_id"]: [{"idx": 0, "title": "T", "paragraph_text": "text"}]
+                  for row in chosen}
+    write_annotator_files(tmp_path, chosen, key, paragraphs)
+    rows_by_question = {row["question_id"]: row for row in episodes}
+    for partition in ("validation", "test", "intervention"):
+        moved = dict(rows_by_question)
+        moved[key[0]["question_id"]] = {**moved[key[0]["question_id"]], "partition": partition}
+        with pytest.raises(ValueError, match="not a train-partition question"):
+            check_qc_packet(tmp_path, key, moved)
+
+
+def test_packet_takes_every_kept_case_and_only_train_partition(episodes):
+    chosen, key, sampling = choose_qc_rows(episodes, seed=42)
+    assert all(row["partition"] == "train" for row in chosen)
     assert sampling["selected"] == {"adopted_critic": 40, "retained_a1": 3}
     assert sampling["population"] == {"adopted_critic": 57, "retained_a1": 3}
     assert sum(entry["second_annotator"] for entry in key) == 13

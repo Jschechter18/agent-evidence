@@ -33,7 +33,7 @@ LABEL_INPUT_FIELDS = ("solver_attempt_1", "critic_advocated_answer", "solver_att
                       "critic_noncommittal")
 
 # Columns of labels.csv that identify the episode; the label columns follow them.
-LABEL_KEY_FIELDS = ["question_id", "source_split", "canonical_split", "lexical_v2_label"]
+LABEL_KEY_FIELDS = ["question_id", "source_split", "partition", "lexical_v2_label"]
 
 # How label columns are stored in labels.csv, so reading restores what was written.
 BOOLEAN_COLUMNS = ("eligible_primary", "eligible_strict", "critic_unresolved_flag",
@@ -205,7 +205,7 @@ def classify_candidate(row):
 
 
 def write_labels(path, rows):
-    """Write one CSV row per question. Each row needs ``label`` and ``canonical_split``.
+    """Write one CSV row per question. Each row needs ``label`` and ``partition``.
 
     A list is joined with ';' and None is left blank.
     """
@@ -218,7 +218,7 @@ def write_labels(path, rows):
             label["exclusion_reasons"] = ";".join(label["exclusion_reasons"])
             values = ["" if label[field] is None else label[field] for field in label_fields]
             writer.writerow([row["question_id"], row["source_split"],
-                             row["canonical_split"], row["solver_behavior"]] + values)
+                             row["partition"], row["solver_behavior"]] + values)
 
 
 def read_labels(path):
@@ -257,7 +257,7 @@ def label_counts(rows):
         exclusion_reasons.update(label["exclusion_reasons"])
 
         if label["eligible_primary"]:
-            target_by_split[f"{row['canonical_split']} / {response}"] += 1
+            target_by_split[f"{row['partition']} / {response}"] += 1
             correctness = (f"a1_correct={row['solver_attempt_1_correct']} / "
                            f"critic_correct={row['critic_feedback_correct']}")
             target_by_correctness[f"{correctness} / {response}"] += 1

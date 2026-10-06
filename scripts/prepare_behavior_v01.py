@@ -12,9 +12,18 @@ The collection run folders are only read, never changed.
     PYTHONPATH=src python scripts/prepare_behavior_v01.py \\
         --artifacts /home/ubuntu/capstone-artifacts \\
         --output /home/ubuntu/capstone-artifacts/<new folder> \\
-        --reuse-qc <existing package>/qc
+        --train-proportion 0.8 --test-proportion 0.1 --intervention-proportion 0.1 \\
+        --split-seed 42
 
-Without --reuse-qc a new QC packet is sampled.
+The partition rule: every MuSiQue-validation question is ``validation``;
+MuSiQue-train questions are cut by question id, stratified by hop count, into
+train / test / intervention with the proportions given here. The team agreed
+0.8 / 0.1 / 0.1 with seed 42 on 2026-10-06.
+
+The QC packet is sampled from the train partition only. Pass --reuse-qc only
+for a packet that was itself sampled under the same partition rule; a packet
+issued under an earlier split is refused because it would show annotators
+test or intervention questions.
 """
 import argparse
 import json
@@ -24,7 +33,7 @@ import shutil
 import yaml
 
 from mas_sae.data.production import (
-    canonical_manifest,
+    build_partition_manifest,
     check_scan_repeats_full_run,
     read_run_interactions,
     split_audit,
@@ -68,7 +77,17 @@ def main():
                         help="qc/ folder of an issued packet to keep unchanged")
     parser.add_argument("--seed", type=int, default=42,
                         help="used only when a new QC packet is sampled")
+    parser.add_argument("--train-proportion", type=float, required=True,
+                        help="share of MuSiQue-train questions that become the train partition")
+    parser.add_argument("--test-proportion", type=float, required=True,
+                        help="share of MuSiQue-train questions that become the test partition")
+    parser.add_argument("--intervention-proportion", type=float, required=True,
+                        help="share of MuSiQue-train questions reserved for the causal experiment")
+    parser.add_argument("--split-seed", type=int, required=True,
+                        help="seed of the hop-stratified cut of MuSiQue-train questions")
     args = parser.parse_args()
+    proportions = {"train": args.train_proportion, "test": args.test_proportion,
+                   "intervention": args.intervention_proportion}
     ensure_output_available(args.output)
 
     full_dir = args.artifacts / FULL_RESULTS
@@ -87,11 +106,12 @@ def main():
 
     first_qc_sample = json.loads((args.artifacts / FIRST_QC_SAMPLE).read_text())
     qc100_ids = [sample["question_id"] for sample in first_qc_sample["samples"]]
-    manifest = canonical_manifest(full_rows, scan_rows, qc100_ids)
+    manifest = build_partition_manifest(full_rows, scan_rows, qc100_ids,
+                                        proportions=proportions, seed=args.split_seed)
 
     # 2. Label every episode of the full run.
     for row in full_rows:
-        row["canonical_split"] = manifest[row["question_id"]]["canonical_split"]
+        row["partition"] = manifest[row["question_id"]]["partition"]
         row["label"] = classify_candidate(row)
 
     # 3. Write the two tables and the counts.
@@ -110,6 +130,9 @@ def main():
                                   for module in RULE_MODULES},
         },
         "source_files_sha256": hashes_before,
+        "partition": {"proportions_of_source_train": proportions, "seed": args.split_seed,
+                      "rule": "MuSiQue-validation -> validation; MuSiQue-train cut by sorted "
+                              "question id, stratified by hop group"},
         "all": label_counts(full_rows),
         "source_train": label_counts(train_rows),
         "source_validation": label_counts(validation_rows),
