@@ -3,8 +3,6 @@ from __future__ import annotations
 import numpy as np
 import torch 
 
-import json
-from pathlib import Path
 
 from mas_sae.sae.sparse_autoencoder import SparseAutoencoder
 
@@ -43,57 +41,3 @@ def make_sample_labels(
     prob = 1 / (1 + np.exp(-logit))
     return (rng.random(sparse_features.shape[0]) < prob).astype(int)
 
-#added after Israel's dependencies completed 
-
-def load_real_layer_split(
-    run_name: str,
-    split: str,
-    layer: str,
-    data_root: Path = Path("data/activations"),
-    results_root: Path = Path("results/collection"),
-) -> tuple[np.ndarray, np.ndarray]:
-    """Load real Solver-Critic Attempt-2 activations and solver_accepted_feedback
-    labels for one candidate layer and split, aligned via each interaction
-    record's attempt2_activation_index.
- 
-    Episodes with critic_noncommittal=True are excluded, since the Critic
-    never gave a clear stance to accept or reject -- see the proposal's
-    "defining feedback acceptance consistently" open issue.
- 
-    Parameters
-    ----------
-    run_name : str
-        The collection run's name, e.g. "scale_smoke_1q".
-    split : str
-        "train" or "validation" (matches the real folder names produced by
-        the collection pipeline).
-    layer : str
-        Layer identifier as it appears in the folder name, e.g. "08", "17".
-    data_root : Path
-        Root directory containing <run_name>/layer_<N>/*.pt activation files.
-    results_root : Path
-        Root directory containing <run_name>/<split>/interactions.jsonl.
- 
-    Returns
-    -------
-    tuple[np.ndarray, np.ndarray]
-        X: Attempt-2 activations for the retained episodes, shape
-           (n_retained, activation_dim).
-        y: Binary solver_accepted_feedback labels, shape (n_retained,).
-    """
-    layer_dir = data_root / run_name / f"layer_{layer}"
-    activations = torch.load(layer_dir / f"{split}_attempt2.pt", weights_only=False).numpy()
- 
-    interactions_path = results_root / run_name / split / "interactions.jsonl"
- 
-    X_rows, y_rows = [], []
-    with open(interactions_path) as f:
-        for line in f:
-            record = json.loads(line)
-            if record.get("critic_noncommittal"):
-                continue
-            idx = record["attempt2_activation_index"]
-            X_rows.append(activations[idx])
-            y_rows.append(int(record["solver_accepted_feedback"]))
- 
-    return np.array(X_rows), np.array(y_rows)
