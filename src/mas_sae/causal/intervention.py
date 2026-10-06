@@ -105,7 +105,7 @@ def run_causal_experiment(
     rng = np.random.default_rng(seed)
 
     X_train, X_val, y_train, y_val = train_val_split(sparse_features, labels, seed=seed)
-    probe, scaler, _, _, X_val, _ = fit_probe(X_train, y_train, X_val, y_val, seed=seed)
+    probe, scaler, *_ = fit_probe(X_train, y_train, X_val, y_val, seed=seed)
 
     baseline_preds = probe.predict(scaler.transform(X_val))  # no-intervention replay
 
