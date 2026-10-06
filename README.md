@@ -76,23 +76,41 @@ This installs new dependencies and removes dependencies that are no longer speci
 
 ```text
 .
+├── configs/                      # Versioned run configuration files
+│   └── collection/               # Activation-collection configs (v1/, v2/)
 ├── cookbooks/                    # Jupyter notebooks and tutorials
 ├── data/                         # Downloaded project datasets
-├── demo/                         # Demonstrations and demo figures
-├── documents/                    # Supporting project documents and references
+├── demo/                         # Demonstrations
+│   └── fig/                      # Demo figures
 ├── presentation/                 # Presentation materials
+├── proposal/                     # Project proposal and its diagram
 ├── reports/                      # Project and progress reports
+│   ├── Latex_report/             # LaTeX-format reports
+│   ├── Markdown_Report/          # Markdown-format report notes
+│   ├── Progress_Report/          # Weekly progress reports
+│   └── Word_Report/              # Word-format reports (e.g. literature review)
 ├── research_paper/               # Research paper source and materials
+│   ├── Latex/                    # LaTeX paper source
+│   │   └── Fig/                  # Figures referenced by the LaTeX paper
+│   ├── Word/                     # Word version of the paper
+│   └── references/               # Reference PDFs for the literature review
 ├── results/                      # Experimental outputs and results
 ├── scripts/                      # Executable Python entry-point scripts
 ├── src/
-│   ├── mas_sae/                 # Reusable Python package
-│   │   ├── agents/              # Solver and critic agent logic
-│   │   ├── data/                # Dataset loading and processing
-│   │   ├── evaluation/          # Evaluation functions and metrics
-│   │   ├── models/              # Language-model loading and interaction
-│   │   └── sae/                 # Sparse-autoencoder functionality
-│   └── tests/                   # Unit and integration tests
+│   ├── component/                # Reusable, non-pipeline components
+│   ├── docs/                     # Project documentation
+│   ├── mas_sae/                  # Reusable Python package
+│   │   ├── activations/          # Activation capture and layer sites
+│   │   ├── agents/               # Solver and critic agent logic
+│   │   ├── causal/               # Causal feature-intervention logic
+│   │   ├── data/                 # Dataset loading and processing
+│   │   ├── evaluation/           # Evaluation functions and metrics
+│   │   ├── experiments/          # Collection pipeline, configs, and run artifacts
+│   │   ├── models/               # Language-model loading and interaction
+│   │   ├── probe/                # Linear probe and interpretability (SHAP/LIME)
+│   │   └── sae/                  # Sparse-autoencoder functionality
+│   ├── shellscripts/             # Shell utility scripts
+│   └── tests/                    # Unit and integration tests
 ├── environment.yml               # Conda environment and dependencies
 ├── pyproject.toml                # Python package configuration
 ├── pytest.ini                    # Pytest configuration
