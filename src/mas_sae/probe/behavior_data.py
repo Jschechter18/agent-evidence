@@ -165,6 +165,18 @@ def align_episodes(
     return df, diag
 
 
+def target_names(series: pd.Series, positive: str = "adopted_critic", negative: str = "not_adopted") -> pd.Series:
+    """Readable class names. In labels.csv `primary_target` is numeric: 1.0 = adopted the Critic,
+    0.0 = did not (retained A1 or a third answer), blank when the row is not eligible."""
+    if pd.api.types.is_numeric_dtype(series):
+        out = series.map({1.0: positive, 0.0: negative})
+        if out.isna().any():
+            raise AlignmentError(f"unexpected values in the target column: "
+                                 f"{sorted(series[out.isna()].dropna().unique().tolist())} (expected 0/1)")
+        return out.astype(str)
+    return series.astype(str)
+
+
 def select_partitions(
     df: pd.DataFrame, cols: Columns, partitions: list[str], allow_sealed: bool = False
 ) -> tuple[pd.DataFrame, dict]:
@@ -179,6 +191,7 @@ def select_partitions(
             "intervention is for the causal stage). Do not use them to fit, tune or select anything.")
     in_part = df[df[cols.partition].astype(str).isin(partitions)]
     out = in_part[as_bool(in_part[cols.eligible])].reset_index(drop=True)
+    out["target_name"] = target_names(out[cols.target])
     for p in partitions:
         if not (out[cols.partition].astype(str) == p).any():
             raise AlignmentError(f"No eligible_primary rows in partition '{p}'.")
@@ -187,11 +200,11 @@ def select_partitions(
         "n_rows_in_partitions": len(in_part),
         "n_eligible": len(out),
         "target_counts_by_partition": {
-            str(p): g[cols.target].value_counts().to_dict() for p, g in out.groupby(cols.partition)},
+            str(p): g["target_name"].value_counts().to_dict() for p, g in out.groupby(cols.partition)},
     }
     if cols.response in out:
-        diag["solver_response_by_target"] = {
-            str(t): g[cols.response].value_counts().to_dict() for t, g in out.groupby(cols.target)}
+        diag["solver_response_by_partition"] = {
+            str(p): g[cols.response].value_counts().to_dict() for p, g in out.groupby(cols.partition)}
     return out, diag
 
 

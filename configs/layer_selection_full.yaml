@@ -3,8 +3,8 @@
 capstone_data_root: data/capstone-data
 activations_dir: natural_4b_full/data                 # <dir>/layer_NN/{train,validation}_attempt2.pt
 results_dir: natural_4b_full/results                  # <dir>/{train,validation}/interactions.jsonl
-labels_csv: REPLACE_ME/labels.csv                # same NEW package folder as the manifest
-manifest_csv: REPLACE_ME/split_manifest.csv           # <- Israel's NEW manifest (has a `partition` column)
+labels_csv: behavior_v011_split80_10_10_20261006/labels.csv
+manifest_csv: behavior_v011_split80_10_10_20261006/split_manifest.csv
 index_column: full_index
 layers: [8, 17, 25, 33]
 protocol: holdout

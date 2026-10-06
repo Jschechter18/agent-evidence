@@ -4,8 +4,8 @@
 capstone_data_root: data/capstone-data
 activations_dir: natural_4b_layer_scan/data/activations/natural_4b_layer_scan
 results_dir: natural_4b_layer_scan/results/collection/natural_4b_layer_scan
-labels_csv: REPLACE_ME/labels.csv                # same NEW package folder as the manifest
-manifest_csv: REPLACE_ME/split_manifest.csv
+labels_csv: behavior_v011_split80_10_10_20261006/labels.csv
+manifest_csv: behavior_v011_split80_10_10_20261006/split_manifest.csv
 index_column: scan_index
 layers: [8, 12, 17, 21, 25, 28, 30, 31, 33]
 protocol: cv

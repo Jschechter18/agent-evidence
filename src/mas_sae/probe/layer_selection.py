@@ -60,6 +60,11 @@ class LayerSelectionConfig:
     layers: list = field(default_factory=lambda: [8, 17, 25, 33])
     source_splits: list = field(default_factory=lambda: ["train", "validation"])  # folder names
     activation_file: str = "{split}_attempt2.pt"           # Solver activations before A2
+    # primary_target is binary (1 = adopted the Critic, 0 = retained A1 or third answer); solver_response
+    # carries the 3-way breakdown and is reported per layer. For a sensitivity run on adopted-vs-retained
+    # only, set target_column: strict_target and eligible_column: eligible_strict.
+    target_column: str = "primary_target"
+    eligible_column: str = "eligible_primary"
     protocol: str = "holdout"                              # "holdout" | "cv"
     fit_partition: str = "train"
     eval_partition: str = "validation"
@@ -163,7 +168,7 @@ def _candidates(layer_matrices, texts, cfg):
     return cand
 
 
-def _evaluate(preds, extras, y, groups, classes, cfg, folds=None) -> dict:
+def _evaluate(preds, extras, y, groups, classes, cfg, folds=None, subgroups=None) -> dict:
     """Metrics, CIs, paired differences, tie rule. ``y``/``groups`` are the EVALUATED rows."""
     boot = grouped_bootstrap_indices(groups, cfg.n_bootstrap, cfg.seed)
     records = {}
@@ -177,6 +182,10 @@ def _evaluate(preds, extras, y, groups, classes, cfg, folds=None) -> dict:
                                  "matrix": confusion(y, pred, classes).tolist()},
             **extras[name],
         }
+        if subgroups is not None:   # e.g. solver_response: did the probe get retained_a1 / third_answer rows right?
+            rec["recall_by_solver_response"] = {
+                str(g): {"recall": float(np.mean(pred[subgroups == g] == y[subgroups == g])),
+                         "n": int((subgroups == g).sum())} for g in np.unique(subgroups)}
         if folds is not None:
             fs = [balanced_accuracy(y[test], pred[test]) for _, test in folds]
             rec.update(per_fold_balanced_accuracy=fs, per_fold_mean=float(np.mean(fs)),
@@ -216,16 +225,17 @@ def _evaluate(preds, extras, y, groups, classes, cfg, folds=None) -> dict:
     }
 
 
-def compare_layers(layer_matrices, y, groups, texts, cfg) -> dict:
+def compare_layers(layer_matrices, y, groups, texts, cfg, subgroups=None) -> dict:
     """`cv` protocol: question-grouped CV over the given rows (all from development partitions)."""
     y, groups = np.asarray(y), np.asarray(groups)
+    subgroups = None if subgroups is None else np.asarray(subgroups).astype(str)
     classes = sorted(np.unique(y).tolist())
     folds, fold_id = make_group_folds(y, groups, cfg.n_folds, cfg.seed)  # ONE set of folds
     preds, extras = {}, {}
     for name, (X, factory) in _candidates(layer_matrices, texts, cfg).items():
         pred, n_conv, chosen = oof_predict(factory, X, y, groups, folds, cfg.c_grid, cfg.inner_folds, cfg.seed)
         preds[name], extras[name] = pred, {"chosen_C_per_fold": chosen, "n_convergence_warnings": n_conv}
-    out = _evaluate(preds, extras, y, groups, classes, cfg, folds)
+    out = _evaluate(preds, extras, y, groups, classes, cfg, folds, subgroups)
     out.update(protocol="cv", n_groups=int(len(np.unique(groups))), _fold_id=fold_id.tolist())
     if cfg.n_permutations > 0:
         best = out["top_layer_by_balanced_accuracy"]
@@ -234,10 +244,11 @@ def compare_layers(layer_matrices, y, groups, texts, cfg) -> dict:
     return out
 
 
-def compare_layers_holdout(layer_matrices, y, groups, is_fit, texts, cfg) -> dict:
+def compare_layers_holdout(layer_matrices, y, groups, is_fit, texts, cfg, subgroups=None) -> dict:
     """`holdout` protocol: fit on the rows where ``is_fit`` is True, score on all the others."""
     y, groups, is_fit = np.asarray(y), np.asarray(groups), np.asarray(is_fit, dtype=bool)
     fit_idx, eval_idx = np.flatnonzero(is_fit), np.flatnonzero(~is_fit)
+    subgroups = None if subgroups is None else np.asarray(subgroups).astype(str)[eval_idx]
     if len(fit_idx) == 0 or len(eval_idx) == 0:
         raise ValueError("holdout needs rows in both the fit and the evaluation partition")
     assert not set(groups[fit_idx]) & set(groups[eval_idx]), "a question appears in both partitions"
@@ -249,7 +260,7 @@ def compare_layers_holdout(layer_matrices, y, groups, is_fit, texts, cfg) -> dic
         model, C, n_conv = _fit_counting_warnings(factory, X[fit_idx], y[fit_idx], groups[fit_idx], cfg)
         preds[name] = model.predict(X[eval_idx])
         extras[name] = {"chosen_C": C, "n_convergence_warnings": n_conv}
-    out = _evaluate(preds, extras, y[eval_idx], groups[eval_idx], classes, cfg, None)
+    out = _evaluate(preds, extras, y[eval_idx], groups[eval_idx], classes, cfg, None, subgroups)
     out.update(protocol="holdout", n_rows_fit=int(len(fit_idx)),
                class_counts_fit={str(c): int((y[fit_idx] == c).sum()) for c in classes})
     if cfg.n_permutations > 0:
@@ -302,7 +313,7 @@ def _permutation_holdout(X, y, groups, fit_idx, eval_idx, cfg, observed_pred) ->
 
 def load_inputs(cfg: LayerSelectionConfig, cols: bd.Columns | None = None):
     """Read, align and filter everything except the activation tensors."""
-    cols = cols or bd.Columns()
+    cols = cols or bd.Columns(target=cfg.target_column, eligible=cfg.eligible_column)
     if "REPLACE_ME" in str(cfg.manifest_csv) or "REPLACE_ME" in str(cfg.labels_csv):
         raise SystemExit("Set labels_csv AND manifest_csv in the config to the NEW behavior package folder "
                          "(they are written together; the manifest has a `partition` column).")
@@ -318,7 +329,8 @@ def load_inputs(cfg: LayerSelectionConfig, cols: bd.Columns | None = None):
 
 def run(cfg: LayerSelectionConfig, cols: bd.Columns | None = None) -> Path:
     selected, diag, cols = load_inputs(cfg, cols)
-    y = selected[cols.target].astype(str).to_numpy()
+    y = selected["target_name"].to_numpy()
+    response = selected[cols.response].astype(str).to_numpy() if cols.response in selected else None
     groups = selected["ep_question_id"].astype(str).to_numpy()
     texts = (selected[[f"text_{f}" for f in cfg.text_fields]]
              .agg(" || ".join, axis=1).to_numpy() if cfg.text_fields else None)
@@ -333,13 +345,15 @@ def run(cfg: LayerSelectionConfig, cols: bd.Columns | None = None) -> Path:
 
     if cfg.protocol == "holdout":
         is_fit = (selected[cols.partition].astype(str) == cfg.fit_partition).to_numpy()
-        res = compare_layers_holdout(matrices, y, groups, is_fit, texts, cfg)
+        res = compare_layers_holdout(matrices, y, groups, is_fit, texts, cfg, response)
     else:
-        res = compare_layers(matrices, y, groups, texts, cfg)
+        res = compare_layers(matrices, y, groups, texts, cfg, response)
 
     run_dir = create_versioned_run_dir(cfg.output_dir)
     fold_id = res.pop("_fold_id", None)
     rows = pd.DataFrame({"question_id": groups, "partition": selected[cols.partition].to_numpy(), "target": y})
+    if response is not None:
+        rows["solver_response"] = response
     if fold_id is not None:
         rows["fold"] = fold_id
     rows.to_csv(run_dir / "rows_and_folds.csv", index=False)   # the exact definition of what was used
@@ -364,13 +378,15 @@ def _write_table(res: dict, path: Path) -> None:
             row["per_fold_mean"], row["per_fold_sd"] = r["per_fold_mean"], r["per_fold_sd"]
         for c, m in r["per_class"].items():
             row[f"recall_{c}"], row[f"precision_{c}"], row[f"n_{c}"] = m["recall"], m["precision"], m["support"]
+        for g, m in r.get("recall_by_solver_response", {}).items():
+            row[f"resp_recall_{g}"], row[f"resp_n_{g}"] = m["recall"], m["n"]
         rows.append(row)
     pd.DataFrame(rows).sort_values("balanced_accuracy", ascending=False).to_csv(path, index=False)
 
 
 def inspect_inputs(cfg: LayerSelectionConfig, cols: bd.Columns | None = None) -> None:
     """Print what the files actually contain, and whether alignment verifies."""
-    cols = cols or bd.Columns()
+    cols = cols or bd.Columns(target=cfg.target_column, eligible=cfg.eligible_column)
     root = Path(cfg.capstone_data_root)
     if "REPLACE_ME" in str(cfg.manifest_csv) or "REPLACE_ME" in str(cfg.labels_csv):
         print("labels_csv / manifest_csv are still REPLACE_ME: point both at the NEW behavior package folder.")

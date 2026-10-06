@@ -15,10 +15,11 @@ import torch
 from mas_sae.probe import behavior_data as bd
 from mas_sae.probe import layer_selection as ls
 
-CLASSES = ["adopted_critic", "retained_a1", "third_answer"]
+CLASSES = ["adopted_critic", "retained_a1", "third_answer"]   # solver_response values
+CODE = {"adopted_critic": 0, "retained_a1": 1, "third_answer": 1}      # planted signal: dim 0 = adopted, dim 1 = not
 
 
-def build_tree(root: Path, n_train=700, n_val=220, seed=0, labels_have_episode_id=True,
+def build_tree(root: Path, n_train=700, n_val=220, seed=0, labels_have_episode_id=False,
                corrupt_index=False, swap_source_split=False, old_manifest=False):
     """Fake Drive: results/{train,validation}/interactions.jsonl, acts/layer_NN/*_attempt2.pt,
     labels.csv and a four-partition manifest."""
@@ -29,7 +30,7 @@ def build_tree(root: Path, n_train=700, n_val=220, seed=0, labels_have_episode_i
             partition = ("validation" if split == "validation"
                          else str(rng.choice(["train", "test", "intervention"], p=[0.8, 0.1, 0.1])))
             rows.append(dict(question_id=f"q{q:05d}", source_split=split, row=i, partition=partition,
-                             target=str(rng.choice(CLASSES, p=[0.6, 0.2, 0.2])),
+                             target=str(rng.choice(CLASSES, p=[0.6, 0.2, 0.2])),   # = solver_response
                              eligible=bool(rng.random() < 0.9)))
             q += 1
     truth = pd.DataFrame(rows)
@@ -43,10 +44,9 @@ def build_tree(root: Path, n_train=700, n_val=220, seed=0, labels_have_episode_i
                 f.write(json.dumps({
                     "episode_id": f"{r.question_id}__natural", "question_id": r.question_id,
                     "attempt2_activation_index": int(r.row),
-                    "solver_attempt_1": f"a1 {'alpha' if r.target == 'adopted_critic' else 'beta'}",
+                    "solver_attempt_1": f"a1 {'alpha' if r.target == 'adopted_critic' else 'beta'} {rng.integers(1000)}",
                     "critic_advocated_answer": "x", "critic_feedback": "fb"}) + "\n")
 
-    code = {c: k for k, c in enumerate(CLASSES)}
     for layer, signal in ((8, 0.0), (17, 2.0)):
         d = root / "acts" / f"layer_{layer:02d}"
         d.mkdir(parents=True)
@@ -54,14 +54,17 @@ def build_tree(root: Path, n_train=700, n_val=220, seed=0, labels_have_episode_i
             sub = truth[truth.source_split == split]
             X = rng.normal(size=(len(sub), 16)).astype(np.float32)
             for i, t in enumerate(sub.target):
-                X[i, code[t]] += signal
+                X[i, CODE[t]] += signal
             torch.save(torch.from_numpy(X), d / f"{split}_attempt2.pt")
 
-    lab = pd.DataFrame({"episode_id": truth.question_id + "__natural", "question_id": truth.question_id,
-                        "primary_target": truth.target, "eligible_primary": truth.eligible,
-                        "solver_response": truth.target})
-    if not labels_have_episode_id:
-        lab = lab.drop(columns=["episode_id"])
+    # real labels.csv: primary_target is numeric (1.0 adopted / 0.0 not / blank if not eligible);
+    # it has question_id but NO episode_id, and carries its own source_split/partition columns.
+    lab = pd.DataFrame({"question_id": truth.question_id, "source_split": truth.source_split,
+                        "partition": truth.partition, "solver_response": truth.target,
+                        "eligible_primary": truth.eligible,
+                        "primary_target": np.where(truth.eligible, (truth.target == "adopted_critic").astype(float), np.nan)})
+    if labels_have_episode_id:
+        lab.insert(0, "episode_id", truth.question_id + "__natural")
     lab.to_csv(root / "labels.csv", index=False)
 
     index = truth.row.to_numpy().copy()
@@ -129,16 +132,32 @@ def test_labels_stay_attached_to_the_right_activation_rows(tmp_path):
     cfg = make_cfg(tmp_path)
     selected, _, cols = ls.load_inputs(cfg)
     X = bd.load_layer_matrix(selected, tmp_path / "acts" / "layer_17")
-    code = {c: k for k, c in enumerate(CLASSES)}
-    own = np.array([X[i, code[t]] for i, t in enumerate(selected[cols.target])])
-    others = np.array([np.delete(X[i, :3], code[t]).mean() for i, t in enumerate(selected[cols.target])])
-    assert own.mean() - others.mean() > 1.5            # planted +2 shows up on exactly the labelled class
+    d = [0 if t == "adopted_critic" else 1 for t in selected["target_name"]]
+    own = np.array([X[i, k] for i, k in enumerate(d)])
+    other = np.array([X[i, 1 - k] for i, k in enumerate(d)])
+    assert own.mean() - other.mean() > 1.5             # planted +2 sits on exactly the labelled class
 
 
-def test_labels_join_falls_back_to_question_id(tmp_path):
-    build_tree(tmp_path, labels_have_episode_id=False)
+def test_labels_join_uses_question_id_as_the_real_labels_file_has_no_episode_id(tmp_path):
+    build_tree(tmp_path)
     _, diag, _ = ls.load_inputs(make_cfg(tmp_path))
     assert diag["labels_join"] == "question_id"
+
+
+def test_labels_join_prefers_episode_id_when_present(tmp_path):
+    build_tree(tmp_path, labels_have_episode_id=True)
+    _, diag, _ = ls.load_inputs(make_cfg(tmp_path))
+    assert diag["labels_join"] == "episode_id"
+
+
+def test_numeric_target_gets_readable_names_and_unexpected_values_are_refused():
+    assert list(bd.target_names(pd.Series([1.0, 0.0, 1.0]))) == ["adopted_critic", "not_adopted", "adopted_critic"]
+    try:
+        bd.target_names(pd.Series([1.0, 2.0]))
+    except bd.AlignmentError as e:
+        assert "unexpected" in str(e)
+    else:
+        raise AssertionError("an unexpected target value was accepted")
 
 
 def test_index_that_disagrees_with_interactions_is_rejected(tmp_path):
@@ -190,8 +209,12 @@ def test_holdout_finds_planted_layer_and_beats_noise_layer(tmp_path):
     assert comp["protocol"] == "holdout" and comp["recommended_layer"] == "layer_17"
     r17, r08 = comp["results"]["layer_17"], comp["results"]["layer_08"]
     assert r17["balanced_accuracy"] > r08["balanced_accuracy"] + 0.15
+    assert comp["chance_balanced_accuracy"] == 0.5 and comp["classes"] == ["adopted_critic", "not_adopted"]
     assert r17["balanced_accuracy"] > comp["chance_balanced_accuracy"] + 0.2
     assert comp["top_layer_ci_lower_above_chance"] is True
+    by_resp = r17["recall_by_solver_response"]            # the 3-way breakdown stays visible
+    assert set(by_resp) == set(CLASSES) and sum(v["n"] for v in by_resp.values()) == comp["n_rows_evaluated"]
+    assert by_resp["retained_a1"]["recall"] > 0.5 and by_resp["third_answer"]["recall"] > 0.5
     assert "text_only_baseline" in comp["results"]
 
 
@@ -203,6 +226,7 @@ def test_cv_protocol_uses_only_development_partitions_and_finds_planted_layer(tm
     used = pd.read_csv(run_dir / "rows_and_folds.csv")
     assert set(used["partition"]) == {"train", "validation"}      # test/intervention never touched
     assert used["question_id"].is_unique and set(used["fold"]) == set(range(5))
+    assert set(used["solver_response"]) == set(CLASSES)
 
 
 def _toy(seed=0, n=300, d=16, signal=0.0):
@@ -250,7 +274,7 @@ def test_label_shuffle_control_lands_near_chance_for_both_protocols(tmp_path):
     for protocol in ("holdout", "cv"):
         comp = _summary(ls.run(make_cfg(tmp_path, protocol=protocol, n_permutations=8)))["comparison"]
         ctrl = comp["label_shuffle_control"]["layer_17"]
-        assert abs(ctrl["null_mean"] - 1 / 3) < 0.1
+        assert abs(ctrl["null_mean"] - 0.5) < 0.1
         assert ctrl["observed"] > ctrl["null_p95"]
 
 
