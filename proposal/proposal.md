@@ -30,7 +30,7 @@ Candidate SAE features identified by the predictive analysis will then be direct
 
 A secondary objective is to compare a **general pretrained SAE** against an **interaction-specific SAE trained on activations collected during Solver-Critic interactions**. This tests whether an SAE trained specifically on the activation distribution produced during feedback processing better isolates features associated with feedback uptake. 
 
-![SAE-MAS Experimental Pipeline](documents/final_capstone_diagram.drawio.png)
+![SAE-MAS Experimental Pipeline](revised_capstone_diagram.drawio.svg)
 
 ### Key Objectives:
 

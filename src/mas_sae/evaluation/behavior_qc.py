@@ -64,14 +64,14 @@ def source_paragraphs(question_ids, dataset_revision):
 
 
 def choose_qc_rows(rows, seed):
-    """Pick discovery rows for the packet and decide which go to a second annotator.
+    """Pick train-partition rows for the packet and decide which go to a second annotator.
 
     Every 'kept A1' case is taken because there are so few; other groups
     contribute a fixed number each. Returns (chosen rows, private key, sampling record).
     """
     groups = defaultdict(list)
     for row in rows:
-        if row["canonical_split"] == "discovery":
+        if row["partition"] == "train":
             groups[qc_stratum(row)].append(row)
 
     rng = random.Random(seed)
@@ -175,8 +175,8 @@ def _check_annotator_file(path, entries, rows_by_question):
                       row_shown["critic_feedback"], row_shown["solver_a2"])
         text_in_run = (row["question"], row["solver_attempt_1"],
                        row["critic_feedback"], row["solver_attempt_2"])
-        if row["canonical_split"] != "discovery":
-            raise ValueError(f"{review_id}: QC row is not a discovery question")
+        if row["partition"] != "train":
+            raise ValueError(f"{review_id}: QC row is not a train-partition question")
         if text_shown != text_in_run:
             raise ValueError(f"{review_id} in {path.name}: text differs from the production run")
         if any(row_shown[column] for column in ANSWER_COLUMNS):
@@ -184,7 +184,7 @@ def _check_annotator_file(path, entries, rows_by_question):
 
 
 def check_qc_packet(qc_dir, key, rows_by_question):
-    """Both annotator files must be discovery-only, match the run's text, and show no labels."""
+    """Both annotator files must be train-partition only, match the run's text, and show no labels."""
     qc_dir = Path(qc_dir)
     for_second = [entry for entry in key if entry["second_annotator"]]
     _check_annotator_file(qc_dir / "annotator_a.csv", key, rows_by_question)
