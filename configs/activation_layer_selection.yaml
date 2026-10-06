@@ -1,6 +1,0 @@
-seed: 42
-run_name: scale_smoke_1q
-candidate_layers: ["08", "17", "25", "33"]
-data_root: data/activations
-results_root: results/collection
-output_dir: results/activation_layer_selection
