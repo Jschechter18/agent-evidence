@@ -177,6 +177,13 @@ Run metadata and reproducibility information are saved under:
 
 This directory contains interactions.jsonl, resolved_config.yaml, and summary.json.
 
+Here `<split>` is the MuSiQue source split (train or validation), which mixes
+the research partitions. For SAE and probe work use an exported partition run
+instead: `scripts/export_partition_activations.py` writes the same layout under
+a new run name with the partition (train, validation, test) in place of the
+source split, following the frozen `split_manifest.csv`. See
+`docs/behavior_v01.md`, section "Keeping evaluation honest".
+
 ## Testing
 
 After activating the Conda environment and installing the project, run:
