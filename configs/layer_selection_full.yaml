@@ -1,0 +1,19 @@
+# Layer selection on the FULL production run (layers 8/17/25/33): fit on `train`, rank on `validation`.
+# Run only after Israel has written the NEW four-partition manifest.
+capstone_data_root: data/capstone-data
+activations_dir: natural_4b_full/data                 # <dir>/layer_NN/{train,validation}_attempt2.pt
+results_dir: natural_4b_full/results                  # <dir>/{train,validation}/interactions.jsonl
+labels_csv: REPLACE_ME/labels.csv                # same NEW package folder as the manifest
+manifest_csv: REPLACE_ME/split_manifest.csv           # <- Israel's NEW manifest (has a `partition` column)
+index_column: full_index
+layers: [8, 17, 25, 33]
+protocol: holdout
+fit_partition: train
+eval_partition: validation
+text_fields: [solver_attempt_1, critic_advocated_answer, critic_feedback]
+seed: 42
+c_grid: [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]          # tuned INSIDE the train rows (inner grouped CV)
+inner_folds: 3
+n_bootstrap: 1000
+n_permutations: 0                                     # ~20 = label-shuffle control on the top layer
+output_dir: results/layer_selection_full
