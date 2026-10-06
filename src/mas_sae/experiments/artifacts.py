@@ -260,9 +260,11 @@ def append_sae_version(
     checkpoint = run_directory / "checkpoints" / "best_checkpoint.pt"
     if not checkpoint.is_file():
         raise FileNotFoundError(checkpoint)
-    fields = ["run_id", "checkpoint_path", "commit", "test_score", "best_val_score"]
+    config = json.loads((run_directory / "config.json").read_text())
+    fields = ["run_id", "activation_run_name", "checkpoint_path", "commit", "test_score", "best_val_score"]
     row = {
         "run_id": manifest["run_id"],
+        "activation_run_name": config["activation_run_name"],
         "checkpoint_path": checkpoint.resolve().relative_to(project_root.resolve()).as_posix(),
         "commit": manifest["git_commit"],
         "test_score": "null" if test_score is None else test_score,

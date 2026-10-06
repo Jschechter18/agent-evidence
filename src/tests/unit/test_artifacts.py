@@ -212,19 +212,24 @@ def test_sha256_helpers_are_canonical(tmp_path) -> None:
     assert artifacts.sha256_file(path) == artifacts.sha256_text("é")
 
 
-def make_completed_sae_run(root, run_id, layer=33):
+def make_completed_sae_run(root, run_id, layer=33, activation_run_name="natural_4b_layer_scan"):
     run = root / "runs" / f"layer_{layer:02d}" / run_id
     (run / "checkpoints").mkdir(parents=True)
     (run / "checkpoints" / "best_checkpoint.pt").touch()
     (run / "manifest.json").write_text(json.dumps({
         "run_id": run_id, "git_commit": "abc123", "status": "completed",
     }))
+    (run / "config.json").write_text(json.dumps({
+        "activation_run_name": activation_run_name,
+    }))
     return run
 
 
 def test_append_sae_versions_creates_appends_and_deduplicates(tmp_path):
     first = make_completed_sae_run(tmp_path, "first")
-    second = make_completed_sae_run(tmp_path, "second")
+    second = make_completed_sae_run(
+        tmp_path, "second", activation_run_name="natural_4b_layer_scan_partitioned",
+    )
     path = artifacts.append_sae_version(first, project_root=tmp_path, best_val_score=2.5)
     artifacts.append_sae_version(second, project_root=tmp_path, best_val_score=1.5, test_score=1.8)
     before = path.read_bytes()
@@ -234,8 +239,10 @@ def test_append_sae_versions_creates_appends_and_deduplicates(tmp_path):
         rows = list(csv.DictReader(file))
     assert rows == [
         {"run_id": "first", "checkpoint_path": "runs/layer_33/first/checkpoints/best_checkpoint.pt",
+         "activation_run_name": "natural_4b_layer_scan",
          "commit": "abc123", "test_score": "null", "best_val_score": "2.5"},
         {"run_id": "second", "checkpoint_path": "runs/layer_33/second/checkpoints/best_checkpoint.pt",
+         "activation_run_name": "natural_4b_layer_scan_partitioned",
          "commit": "abc123", "test_score": "1.8", "best_val_score": "1.5"},
     ]
     other = make_completed_sae_run(tmp_path, "third", layer=17)
