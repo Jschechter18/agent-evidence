@@ -129,6 +129,182 @@ After modifying `environment.yml`, update your environment:
 conda env update -f environment.yml --prune
 ```
 
+## Persistent Storage with Amazon S3
+
+Generated activations and SAE checkpoints are not committed to Git. The team uses Amazon S3 to transfer these artifacts between compute instances and preserve them outside an individual EC2 instance.
+
+Remote artifacts are stored under:
+
+```text
+s3://dats-capstone/shared/group3/
+```
+
+### Install the AWS CLI
+
+On the course Ubuntu EC2 instance, install AWS CLI v2 for the current user:
+
+```bash
+curl -fsSL https://awscli.amazonaws.com/v2/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
+hash -r
+```
+
+Verify the installation:
+
+```bash
+aws --version
+```
+
+See the [official AWS CLI installation instructions](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) for other platforms.
+
+### Configure School SSO Access
+
+The course account uses AWS IAM Identity Center. Do not use long-lived IAM access keys.
+
+1. Sign in to the school AWS access portal.
+2. Expand the assigned AWS account.
+3. Find the student role.
+4. Select **Access keys**.
+5. Under **AWS IAM Identity Center credentials (Recommended)**, copy the:
+   - SSO start URL
+   - SSO region
+
+Configure a named CLI profile:
+
+```bash
+aws configure sso --profile school --use-device-code
+```
+
+Use the following values when prompted:
+
+```text
+SSO session name: school
+SSO start URL: <copy from the AWS access portal>
+SSO region: us-east-1
+SSO registration scopes: sso:account:access
+Default client Region: us-east-1
+CLI default output format: json
+```
+
+If asked whether to configure AWS skills and an AWS MCP server, select **No**. They are not required for S3 synchronization.
+
+The device-login process displays a URL and code. Open the URL on a computer with a browser, enter the code, and authorize the school AWS session.
+
+For subsequent sessions, renew authentication with:
+
+```bash
+aws sso login --profile school --use-device-code
+```
+
+Verify the active identity:
+
+```bash
+aws sts get-caller-identity --profile school
+```
+
+If this command reports expired credentials, rerun `aws sso login`.
+
+### S3 Directory Layout
+
+Local paths are mirrored beneath the group S3 prefix:
+
+| Local path          | S3 prefix                                            |
+| ------------------- | ---------------------------------------------------- |
+| `data/activations/` | `s3://dats-capstone/shared/group3/data/activations/` |
+| `results/sae/`      | `s3://dats-capstone/shared/group3/results/sae/`      |
+
+### Upload Activations
+
+Always preview a synchronization first:
+
+```bash
+aws s3 sync \
+  data/activations/ \
+  s3://dats-capstone/shared/group3/data/activations/ \
+  --dryrun \
+  --profile school
+```
+
+If the preview is correct, upload the files:
+
+```bash
+aws s3 sync \
+  data/activations/ \
+  s3://dats-capstone/shared/group3/data/activations/ \
+  --profile school
+```
+
+Verify the remote contents:
+
+```bash
+aws s3 ls \
+  s3://dats-capstone/shared/group3/data/activations/ \
+  --recursive \
+  --profile school
+```
+
+### Download Activations
+
+To restore activations from S3, reverse the source and destination:
+
+```bash
+aws s3 sync \
+  s3://dats-capstone/shared/group3/data/activations/ \
+  data/activations/ \
+  --dryrun \
+  --profile school
+```
+
+After reviewing the preview:
+
+```bash
+aws s3 sync \
+  s3://dats-capstone/shared/group3/data/activations/ \
+  data/activations/ \
+  --profile school
+```
+
+### Upload an SAE Checkpoint Directory
+
+Replace `<layer>` and `<run-id>` with the applicable experiment values:
+
+```bash
+aws s3 sync \
+  results/sae/musique/runs/<layer>/<run-id>/checkpoints/ \
+  s3://dats-capstone/shared/group3/results/sae/musique/runs/<layer>/<run-id>/checkpoints/ \
+  --dryrun \
+  --profile school
+```
+
+After reviewing the preview, remove `--dryrun`:
+
+```bash
+aws s3 sync \
+  results/sae/musique/runs/<layer>/<run-id>/checkpoints/ \
+  s3://dats-capstone/shared/group3/results/sae/musique/runs/<layer>/<run-id>/checkpoints/ \
+  --profile school
+```
+
+To restore that checkpoint directory, reverse the paths:
+
+```bash
+aws s3 sync \
+  s3://dats-capstone/shared/group3/results/sae/musique/runs/<layer>/<run-id>/checkpoints/ \
+  results/sae/musique/runs/<layer>/<run-id>/checkpoints/ \
+  --profile school
+```
+
+### Synchronization Safety
+
+- Use `--dryrun` before uploads and downloads.
+- Do not use `--delete` unless remote or local deletion is explicitly intended.
+- `sync` skips matching files and transfers missing or changed files.
+- Uploading to an existing S3 key can replace that object.
+- S3 authentication does not change the local `ActivationStore`; experiments continue reading and writing local paths.
+- Never commit or share AWS access keys, secret keys, session tokens, or screenshots containing them.
+- Do not place AWS credentials in `data_sync.py`, configuration files, notebooks, or the repository.
+- An `AccessDenied` error means authentication succeeded but the school role lacks permission for the requested bucket or prefix.
+
 ## Jupyter Notebooks
 
 After environment is set up, when using a jupyter notebook, make sure to run the following command to ensure you can select the capstone environment inside the kernel:
