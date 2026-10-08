@@ -1,8 +1,8 @@
 """Layer selection under the 6 Oct split contract (development partitions only).
 
-    python scripts/layer_selection.py --config configs/layer_selection_full.yaml --inspect   # FIRST
-    python scripts/layer_selection.py --config configs/layer_selection_full.yaml             # holdout: fit train, rank validation
-    python scripts/layer_selection.py --config configs/layer_selection_scan.yaml             # cv over train+validation (nine layers)
+    python scripts/layer_selection.py --config configs/layer_selection_scan.yaml --inspect   # FIRST
+    python scripts/layer_selection.py --config configs/layer_selection_scan.yaml             # nine layers: fit train, rank validation
+    python scripts/layer_selection.py --config configs/layer_selection_full.yaml             # full run, same protocol
 """
 
 import argparse

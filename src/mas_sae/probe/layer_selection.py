@@ -3,10 +3,10 @@
 Two protocols, both restricted to the DEVELOPMENT partitions (``test`` and ``intervention`` are
 sealed and can never be requested):
 
-  holdout  fit the probe on `train`, rank layers on `validation`   (the contract; use for the
-           full-run layers 8/17/25/33, where validation has hundreds of eligible rows)
-  cv       question-grouped CV over `train` + `validation`          (use for the nine-layer scan,
-           whose validation slice alone is far too small to rank nine layers)
+  holdout  fit the probe on `train`, rank layers on `validation`   (the contract; used for both
+           the nine-layer scan and the full-run layers)
+  cv       question-grouped CV over `train` + `validation`          (NOT the contract: it fits on
+           validation rows; no config uses it)
 
 Common to both: the target is `primary_target` on `eligible_primary` rows, the probe is
 class-weighted with C chosen inside the training data only, every layer sees identical rows/folds,
@@ -50,8 +50,9 @@ DEV_PARTITIONS = ["train", "validation"]
 @dataclass
 class LayerSelectionConfig:
     capstone_data_root: Path = Path("data/capstone-data")  # the downloaded shared Drive folder
-    activations_dir: str = "natural_4b_full/data"          # <dir>/layer_NN/{split}_attempt2.pt
-    results_dir: str = "natural_4b_full/results"           # <dir>/{split}/interactions.jsonl
+    # partitioned export: folders are named by partition, not by MuSiQue source split
+    activations_dir: str = "natural_4b_partitioned/data/activations/natural_4b_partitioned"  # <dir>/layer_NN/{split}_attempt2.pt
+    results_dir: str = "natural_4b_partitioned/results/collection/natural_4b_partitioned"    # <dir>/{split}/interactions.jsonl
     # labels.csv and split_manifest.csv are written together into ONE behavior package folder;
     # point both at the NEW package (the one whose manifest has a `partition` column).
     labels_csv: str = "REPLACE_ME/labels.csv"

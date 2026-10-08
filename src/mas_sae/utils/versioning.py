@@ -1,6 +1,5 @@
-"""Shared run-versioning helper. Used by both scripts/causal_pipeline.py and
-scripts/activation_layer_selection_probe.py so results from repeated runs
-never overwrite each other, and so both scripts version output the same way."""
+"""Shared run-versioning helper. Used by mas_sae.probe.layer_selection so
+results from repeated runs never overwrite each other."""
 
 from __future__ import annotations
 

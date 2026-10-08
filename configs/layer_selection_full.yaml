@@ -1,8 +1,8 @@
-# Layer selection on the FULL production run (layers 8/17/25/33): fit on `train`, rank on `validation`.
-# Run only after Israel has written the NEW four-partition manifest.
+# Layer selection on the FULL production run (partitioned export, layers 8/17/25/33):
+# fit on `train`, rank on `validation`. test and intervention rows are never read.
 capstone_data_root: data/capstone-data
-activations_dir: natural_4b_full/data                 # <dir>/layer_NN/{train,validation}_attempt2.pt
-results_dir: natural_4b_full/results                  # <dir>/{train,validation}/interactions.jsonl
+activations_dir: natural_4b_partitioned/data/activations/natural_4b_partitioned    # <dir>/layer_NN/{train,validation}_attempt2.pt
+results_dir: natural_4b_partitioned/results/collection/natural_4b_partitioned      # <dir>/{train,validation}/interactions.jsonl
 labels_csv: behavior_v011_split80_10_10_20261006/labels.csv
 manifest_csv: behavior_v011_split80_10_10_20261006/split_manifest.csv
 index_column: full_index
