@@ -28,7 +28,7 @@ from mas_sae.sae.callbacks.early_stopping import EarlyStoppingCallback
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-name", type=str, default= "natural_4b_layer_scan_partitioned")
+    parser.add_argument("--run-name", type=str, required=True)
     parser.add_argument("--layer", type=int, required=True)
     args = parser.parse_args()
 
