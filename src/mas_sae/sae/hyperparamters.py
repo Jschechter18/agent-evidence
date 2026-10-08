@@ -16,4 +16,4 @@ class Hyperparameters:
     patience: int = 20
     lr_patience: int = 5
 
-    sparsity_coefficient: float = 3e-2
+    sparsity_coefficient: float = 0.1
