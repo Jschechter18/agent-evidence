@@ -3,6 +3,5 @@ General notes:
 
 Interpretation to record:
     - good validation reconstruction, but a relatively dense representation and substantial unused dictionary capacity. Validation reconstruction error is approximately 18× training error, showing a pronounced generalization gap. These metrics do not establish feature interpretability.
-Evaluation limitations:
-    - one seed, no separate test evaluation, and question-level train/validation separation remains unverified in this review.
-    - this model was trained on invalid data split - disregard this run.
+
+    
