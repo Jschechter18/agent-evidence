@@ -150,7 +150,31 @@ PYTHONPATH=src python scripts/prepare_behavior_v01.py \
     --split-seed 42
 ```
 
-This writes `labels.csv`, `split_manifest.csv`, `counts.json` and the `qc/` packet. `counts.json` also records the Git commit, the hashes of the rule files that produced the labels, the partition proportions and seed, and the partition audit. The collection run folders are read and never changed. Activation tensors stay outside Git.
+This writes `labels.csv`, `split_manifest.csv`, `partitions.csv`, `counts.json` and the `qc/` packet. `counts.json` also records the Git commit, the hashes of the rule files that produced the labels, the partition proportions and seed, and the partition audit. The collection run folders are read and never changed. Activation tensors stay outside Git.
+
+## Re-running the collection without moving a single question
+
+The cut above is reproducible only from the exact same question set. Remove one question and the seeded shuffle moves many others: on the real run, dropping one question moved between 131 and 2,780 other questions. So the assignment was made once and is frozen in `partitions.csv`, committed at `results/behavior/behavior_v011_split80_10_10_20261006/partitions.csv` next to the `split_manifest.csv`, `labels.csv` and `counts.json` it came from. Every later run takes its partitions from that file and never derives them again:
+
+```bash
+PYTHONPATH=src python scripts/prepare_behavior_v01.py \
+    --full-results <artifacts>/<rerun>/results \
+    --output <artifacts>/<new package folder> \
+    --frozen-partitions results/behavior/behavior_v011_split80_10_10_20261006/partitions.csv \
+    --coverage complete
+```
+
+What this guarantees:
+
+- A question keeps its partition whatever order the run collected it in. Only `full_index` / `scan_index`, the activation rows, are rebuilt for the new run.
+- `--coverage complete` (the default) stops if any frozen question is missing from the run. `--coverage subset` is for runs that deliberately cover part of the question set, such as a layer scan; the uncovered ids are written to `missing_question_ids.json` and counted in `counts.json["partition"]["questions"]`.
+- A question the frozen file does not know stops the run. Adding questions is a new manifest version made by a person, not something the script decides.
+- The rerun's `split_manifest.csv` has the same columns as before, so every reader (`read_manifest`, the export, the layer-selection loader) works unchanged.
+- `scripts/export_partition_activations.py` checks the package manifest against the frozen file before writing anything, so a package built under a different cut is refused.
+
+`partitions.csv` fields: `question_id`; `source_split`, the MuSiQue split the question came from; `partition`, the only column anyone reads to choose data; `hop_group`, what the stratification used. Everything else in `split_manifest.csv` (`collection_split`, `scan_split`, the development flags, the two index columns) describes one run and is rebuilt per run.
+
+For a future collection use `configs/collection/v2/natural_4b_rerun_*.yaml`: the same models, budgets, layers and seed as the recorded run, a new run name, and no collection-time `experiment_split`. The historical configs are left as they were, because the resumable collection checks them.
 
 ```python
 from mas_sae.data.production import load_labeled_rows, load_production_activations

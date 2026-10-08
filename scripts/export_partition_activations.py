@@ -11,6 +11,9 @@ the partition in place of the MuSiQue source split:
 
 Nothing is recomputed and no source file is changed. The destination must not
 exist. Which partitions are written is stated explicitly on the command line.
+Before anything is written, every question's partition in the package manifest
+is checked against the committed frozen mapping (``--frozen-partitions``); a
+package built under a different assignment is refused.
 
     PYTHONPATH=src python scripts/export_partition_activations.py \\
         --package /home/ubuntu/capstone-artifacts/<package folder> \\
@@ -30,8 +33,11 @@ from pathlib import Path
 
 from mas_sae.data.production import (
     PARTITIONS,
+    PARTITIONS_FILE,
+    check_manifest_matches_frozen,
     export_partition_activations,
     load_labeled_rows,
+    read_partitions,
 )
 from mas_sae.experiments.artifacts import (
     get_git_commit,
@@ -39,6 +45,10 @@ from mas_sae.experiments.artifacts import (
     sha256_file,
     write_json_atomic,
 )
+
+# The frozen question-to-partition mapping this repository's runs are bound to.
+FROZEN_PARTITIONS = (Path(__file__).resolve().parents[1] / "results" / "behavior"
+                     / "behavior_v011_split80_10_10_20261006" / PARTITIONS_FILE)
 
 
 def main():
@@ -58,9 +68,13 @@ def main():
     parser.add_argument("--export-run-name", required=True)
     parser.add_argument("--export-activation-root", type=Path, required=True)
     parser.add_argument("--export-result-root", type=Path, required=True)
+    parser.add_argument("--frozen-partitions", type=Path, default=FROZEN_PARTITIONS,
+                        help="committed partitions.csv the package manifest must agree with "
+                             "(default: the repository's frozen mapping)")
     args = parser.parse_args()
 
     rows, manifest = load_labeled_rows(args.source_results, args.package)
+    check_manifest_matches_frozen(manifest, read_partitions(args.frozen_partitions))
     summary = export_partition_activations(
         rows, manifest, args.source_activations, run=args.run, layers=args.layers,
         export_activation_root=args.export_activation_root,
@@ -74,6 +88,8 @@ def main():
         "package": str(args.package),
         "manifest_sha256": sha256_file(args.package / "split_manifest.csv"),
         "labels_sha256": sha256_file(args.package / "labels.csv"),
+        "frozen_partitions": str(args.frozen_partitions),
+        "frozen_partitions_sha256": sha256_file(args.frozen_partitions),
         "partition_rule": package_counts.get("partition"),
         "source_run": args.run,
         "source_results": str(args.source_results),

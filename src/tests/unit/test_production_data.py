@@ -1,4 +1,7 @@
+from collections import Counter
+import csv
 import json
+from pathlib import Path
 import random
 
 import pytest
@@ -7,17 +10,23 @@ import torch
 from mas_sae.data.production import (
     INTERVENTION_IDS_FILE,
     MANIFEST_FIELDS,
+    PARTITION_FIELDS,
     PARTITIONS,
+    PARTITIONS_FILE,
     assign_partitions,
     authorize_rows,
     build_partition_manifest,
+    check_manifest_matches_frozen,
     check_scan_repeats_full_run,
     export_partition_activations,
     load_labeled_rows,
     load_production_activations,
+    partition_coverage,
     read_manifest,
+    read_partitions,
     split_audit,
     write_manifest,
+    write_partitions,
 )
 from mas_sae.evaluation.behavior_v01 import classify_candidate, write_labels
 from mas_sae.experiments.records import read_jsonl, write_jsonl
@@ -400,3 +409,158 @@ def test_export_refuses_rows_from_a_different_run(tmp_path):
             full[:3], manifest, tmp_path / "src", run="full", layers=[8],
             export_activation_root=tmp_path / "data", export_result_root=tmp_path / "results",
             export_run_name="partitioned")
+
+
+# ------------------------------------------------------------------ the frozen mapping
+
+def frozen_from(manifest):
+    return {q: {field: m[field] for field in PARTITION_FIELDS} for q, m in manifest.items()}
+
+
+def recollected(full, seed):
+    """The same questions collected again in another order: new activation rows per source split."""
+    shuffled = list(full)
+    random.Random(seed).shuffle(shuffled)
+    next_index, rerun = {}, []
+    for r in shuffled:
+        i = next_index.get(r["source_split"], 0)
+        next_index[r["source_split"]] = i + 1
+        rerun.append({**r, "attempt1_activation_index": i, "attempt2_activation_index": i})
+    return rerun
+
+
+def test_partitions_file_holds_the_manifests_frozen_columns_and_round_trips(tmp_path):
+    full = train_rows(15) + [row("2hop__v0_0", i=0, source="validation")]
+    manifest = manifest_for(full)
+    write_partitions(tmp_path / "p.csv", manifest)
+    frozen = read_partitions(tmp_path / "p.csv")
+    assert frozen == frozen_from(manifest)
+    assert list(next(iter(frozen.values()))) == PARTITION_FIELDS
+    # A full manifest is accepted as a frozen source too; its extra columns are ignored.
+    write_manifest(tmp_path / "m.csv", manifest)
+    assert read_partitions(tmp_path / "m.csv") == frozen
+
+
+def test_read_partitions_rejects_malformed_mappings(tmp_path):
+    def write(rows, header=PARTITION_FIELDS):
+        path = tmp_path / "p.csv"
+        with open(path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=header)
+            writer.writeheader()
+            writer.writerows(rows)
+        return path
+
+    good = {"question_id": "2hop__1_1", "source_split": "train", "partition": "train", "hop_group": "2hop"}
+    assert read_partitions(write([good])) == {"2hop__1_1": good}
+    for bad, message in [
+        ([good, good], "appears twice"),
+        ([{**good, "source_split": "dev"}], "unknown source split"),
+        ([{**good, "partition": "holdout"}], "unknown partition"),
+        ([{**good, "hop_group": "3hop"}], "does not match the id"),
+        ([{**good, "source_split": "validation"}], "only MuSiQue-validation"),
+        ([{**good, "partition": "validation"}], "only MuSiQue-validation"),
+        ([], "no questions"),
+    ]:
+        with pytest.raises(ValueError, match=message):
+            read_partitions(write(bad))
+    with pytest.raises(ValueError, match="missing columns"):
+        read_partitions(write([{"question_id": "2hop__1_1"}], header=["question_id"]))
+
+
+def test_frozen_mapping_keeps_membership_when_collection_order_changes_and_rebuilds_indices():
+    full = train_rows(30) + [row(f"2hop__v{k}_{k}", i=k, source="validation") for k in range(5)]
+    first = manifest_for(full)
+    rerun = recollected(full, seed=3)
+    second = build_partition_manifest(rerun, frozen=frozen_from(first))
+    assert {q: m["partition"] for q, m in second.items()} == {q: m["partition"] for q, m in first.items()}
+    # Indices follow the new run, so each question still points at its own activation row...
+    assert {q: m["full_index"] for q, m in second.items()} == {r["question_id"]: r["attempt2_activation_index"]
+                                                              for r in rerun}
+    # ...and they really did move, so this is not the first manifest in disguise.
+    assert any(second[q]["full_index"] != first[q]["full_index"] for q in first)
+    assert list(second["2hop__0_0"]) == MANIFEST_FIELDS
+    assert partition_coverage(second, frozen_from(first))["missing"] == 0
+
+
+def test_missing_question_fails_a_complete_run_and_never_moves_the_others():
+    full = train_rows(200) + [row(f"3hop1__{k}_{k}", i=200 + k) for k in range(40)]
+    first = manifest_for(full)
+    frozen = frozen_from(first)
+    gone = full[5]["question_id"]
+    dropped = [r for r in full if r["question_id"] != gone]
+    with pytest.raises(ValueError, match="were not collected"):
+        build_partition_manifest(dropped, frozen=frozen)
+    kept = build_partition_manifest(dropped, frozen=frozen, coverage="subset")
+    assert all(kept[q]["partition"] == first[q]["partition"] for q in kept)
+    assert set(first) - set(kept) == {gone}
+    assert partition_coverage(kept, frozen) == {"expected": 240, "collected": 239, "missing": 1,
+                                                "missing_ids": [gone]}
+    # Negative control: re-deriving after the same drop re-cuts the set and moves other questions.
+    rederived = manifest_for(dropped)
+    assert any(rederived[q]["partition"] != first[q]["partition"] for q in rederived)
+
+
+def test_subset_run_keeps_its_questions_partitions():
+    full = train_rows(60) + [row(f"2hop__v{k}_{k}", i=k, source="validation") for k in range(10)]
+    first = manifest_for(full)
+    scan = recollected(full[::3], seed=5)                 # a deliberate subset, re-indexed
+    subset = build_partition_manifest(scan, frozen=frozen_from(first), coverage="subset")
+    assert all(subset[q]["partition"] == first[q]["partition"] for q in subset)
+    coverage = partition_coverage(subset, frozen_from(first))
+    assert coverage["collected"] == len(scan) and coverage["expected"] == len(full)
+    assert coverage["missing"] == len(full) - len(scan) == len(coverage["missing_ids"])
+
+
+def test_unknown_question_bad_source_split_and_mixed_arguments_are_refused():
+    full = train_rows(10)
+    frozen = frozen_from(manifest_for(full))
+    with pytest.raises(ValueError, match="not in the frozen mapping"):
+        build_partition_manifest(full + [row("2hop__99_99", i=10)], frozen=frozen)
+    with pytest.raises(ValueError, match="source_split is 'validation'"):
+        build_partition_manifest([{**full[0], "source_split": "validation"}] + full[1:], frozen=frozen)
+    with pytest.raises(ValueError, match="pass one or the other"):
+        build_partition_manifest(full, frozen=frozen, proportions=PROPORTIONS, seed=0)
+    with pytest.raises(ValueError, match="required when no frozen"):
+        build_partition_manifest(full)
+    with pytest.raises(ValueError, match="coverage must be"):
+        build_partition_manifest(full, frozen=frozen, coverage="partial")
+
+
+def test_package_built_under_another_cut_is_caught_before_export():
+    full = train_rows(50)
+    first = manifest_for(full)
+    frozen = frozen_from(first)
+    assert check_manifest_matches_frozen(first, frozen) is first
+    other = manifest_for(full, seed=1)
+    assert other != first
+    with pytest.raises(ValueError, match="partition is"):
+        check_manifest_matches_frozen(other, frozen)
+    with_stranger = {**first, "2hop__99_99": {**first["2hop__0_0"], "question_id": "2hop__99_99"}}
+    with pytest.raises(ValueError, match="not in the frozen mapping"):
+        check_manifest_matches_frozen(with_stranger, frozen)
+
+
+# ------------------------------------------------------------------ the committed mapping
+
+COMMITTED = (Path(__file__).resolve().parents[3] / "results" / "behavior"
+             / "behavior_v011_split80_10_10_20261006")
+
+
+@pytest.mark.skipif(not COMMITTED.is_dir(), reason="the committed behavior package is not in this checkout")
+def test_committed_partitions_file_is_derived_from_the_committed_manifest():
+    manifest = read_manifest(COMMITTED / "split_manifest.csv")
+    frozen = read_partitions(COMMITTED / PARTITIONS_FILE)
+    assert frozen == frozen_from(manifest)
+    counts = json.loads((COMMITTED / "counts.json").read_text())
+    assert counts["split_audit"]["by_partition"] == Counter(m["partition"] for m in manifest.values())
+
+
+@pytest.mark.skipif(not COMMITTED.is_dir(), reason="the committed behavior package is not in this checkout")
+def test_committed_manifest_is_reproduced_by_its_recorded_rule_from_the_same_question_set():
+    manifest = read_manifest(COMMITTED / "split_manifest.csv")
+    rule = json.loads((COMMITTED / "counts.json").read_text())["partition"]
+    ids = {}
+    for m in manifest.values():
+        ids.setdefault(m["source_split"], []).append(m["question_id"])
+    assignment = assign_partitions(ids, proportions=rule["proportions_of_source_train"], seed=rule["seed"])
+    assert assignment == {q: m["partition"] for q, m in manifest.items()}
