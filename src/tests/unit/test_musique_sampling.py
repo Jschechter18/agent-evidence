@@ -285,6 +285,23 @@ def test_assign_experiment_splits_rejects_duplicates_and_bad_names() -> None:
         )
 
 
+def test_assign_experiment_splits_accepts_caller_supplied_names() -> None:
+    ids = [row["id"] for row in POOL[:30]]
+    proportions = {"train": 0.8, "test": 0.1, "intervention": 0.1}
+
+    assignment = musique.assign_experiment_splits(
+        ids, proportions=proportions, seed=0,
+        supported_splits=("train", "test", "intervention"),
+    )
+
+    assert set(assignment) == set(ids)
+    assert Counter(assignment.values()) == {"train": 24, "test": 3, "intervention": 3}
+
+    # The default still accepts only the collection-time names.
+    with pytest.raises(ValueError, match="unsupported names"):
+        musique.assign_experiment_splits(ids, proportions=proportions, seed=0)
+
+
 def test_describe_sampled_questions_records_order_and_split() -> None:
     examples = [
         {"id": "3hop1__1_2"},

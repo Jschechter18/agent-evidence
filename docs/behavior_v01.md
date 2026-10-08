@@ -92,23 +92,39 @@ Two things follow. First, the Solver defers heavily: it gives up a correct answe
 
 ## Keeping evaluation honest
 
-Each question belongs to one partition, taken from the full production run:
+Each question belongs to exactly one partition, decided from its question id and its MuSiQue source split and written once to `split_manifest.csv` (column `partition`). Every MuSiQue-validation question is `validation`. MuSiQue-train questions are sorted by id, grouped by hop count and cut with a seeded shuffle into `train` / `test` / `intervention`. The proportions and the seed are arguments to the package script and are recorded in `counts.json["partition"]`; the team agreed 0.8 / 0.1 / 0.1 with seed 42 on 2026-10-06. Splitting is by question, so a question's two answers (A1 and A2) are always in the same partition.
 
-| Partition | Questions | Used for | Adopted / kept / third |
-|---|---:|---|---|
-| discovery | 13,396 | fitting, choosing layers and features, tuning | 3,413 / 102 / 293 |
-| validation | 4,469 | testing a configuration that is already frozen | 1,089 / 30 / 116 |
-| intervention | 4,467 | the later causal experiments | 1,104 / 35 / 86 |
+| Partition | From | Used for | Read by purpose |
+|---|---|---|---|
+| train | MuSiQue train, 80% | fitting the SAE, the probes and the per-layer probes | `fit` |
+| validation | all of MuSiQue validation | early stopping, layer choice, feature choice | `tune` |
+| test | MuSiQue train, 10% | the frozen SAE and probes, scored once | `evaluate` |
+| intervention | MuSiQue train, 10% | the causal experiment, run live, much later | `intervene` |
 
-We found one problem and fixed it. The layer scan re-ran 2,500 of the same questions but assigned their splits independently, so 1,370 of them have a different split in the scan, and 576 that the scan calls "discovery" are held out in the full run. Choosing a layer on the scan and then testing on the full run would have leaked. The rule now is that the full run's split is the only one used; `split_manifest.csv` records it for every question.
+Question counts for the agreed proportions on the collected run are in the package's `counts.json` under `split_audit.by_partition`. MuSiQue validation has a harder hop mix than MuSiQue train (about 17% four-hop versus 6%), so validation loss will sit above train and test loss; that is expected and not leakage.
 
-973 held-out questions (476 validation, 497 intervention) were part of earlier development data: they are in the layer scan or in the first 100-row QC sample. We know these questions were available during development. We did not record whether each one was actually looked at or used in a decision. They are flagged `in_development_data`, and held-out results should be reported with and without them.
+Two earlier assignments are kept in the manifest as history only: `collection_split`, the split each collection run assigned at the time, and `scan_split`, the layer scan's own assignment, which differs from the full run's for 1,370 of the 2,500 scan questions. Neither is read for any decision.
 
-`load_production_activations` in `src/mas_sae/data/production.py` asks the caller to state a purpose (`fit`, `tune`, `evaluate`, `intervene`) and refuses rows from the wrong partition. It also checks each row's activation index and the activation file's size against the manifest, so layer-scan rows cannot be read against full-run files (or the reverse) and return another question's activations. For layer-scan data pass `run="scan"`.
+Questions that were part of earlier development data (the 2,500-question layer scan or the first 100-row QC sample) are flagged `in_development_data`. The flag records that a question was available then, not that it was used in any decision. Results on test and intervention should be reported with and without these questions.
+
+`load_production_activations` in `src/mas_sae/data/production.py` asks the caller to state a purpose and refuses rows from any other partition; the partition is looked up by question id in the manifest, never taken from the row. It also checks each row's activation index and the activation file's size against the manifest, so layer-scan rows cannot be read against full-run files (or the reverse) and return another question's activations. For layer-scan data pass `run="scan"`.
+
+### Activation files by partition
+
+The collection run stores tensors by MuSiQue source split (`train.pt`, `validation.pt`), which mix partitions. `scripts/export_partition_activations.py` writes the same layout under a new run name with the partition in place of the source split, by gathering rows from the existing tensors through the manifest:
+
+```text
+<export root>/data/activations/<export run>/layer_NN/{train,validation,test}[_attempt1|_attempt2].pt
+<export root>/results/collection/<export run>/<partition>/interactions.jsonl   # re-indexed; source_run and source_activation_index keep the original row
+<export root>/results/collection/<export run>/intervention_question_ids.json
+<export root>/results/collection/<export run>/export_summary.json             # commit, manifest hash, proportions, seed, layers, counts, file hashes
+```
+
+Only the partitions named on the command line are written; no `intervention.pt` is produced, because the causal stage re-runs the Solver live and needs only the reserved ids and the stored episodes. The destination must not exist, so an export can never overwrite or leave stale files. Loaders that take a run name and a split name (the SAE trainer, the layer-selection probe) point at the exported run and read `train` and `validation`; `test` is scored once on the frozen checkpoint.
 
 ## Human check
 
-The labels are string rules, so they need to be checked by people. A blind packet of 542 discovery episodes is ready: every "kept" case in discovery (102) plus 40 from each other situation, shuffled together. Annotators see the question, the source paragraphs, A1, the Critic's feedback and A2, and none of our labels. A second annotator independently labels 120 of the rows. `scripts/qc_agreement.py` then reports agreement and lists the disagreements. Instructions are in `docs/qc_guide.md`.
+The labels are string rules, so they need to be checked by people. The blind packet is sampled from the train partition only: every "kept" case in train plus 40 from each other situation, shuffled together. A packet sampled under an earlier split is not reused, because it would show annotators test or intervention questions. Annotators see the question, the source paragraphs, A1, the Critic's feedback and A2, and none of our labels. A second annotator independently labels 120 of the rows. `scripts/qc_agreement.py` then reports agreement and lists the disagreements. Instructions are in `docs/qc_guide.md`.
 
 Until that is done, `human_validated_behavior_v1` is empty for every row and results built on these labels are exploratory.
 
@@ -130,16 +146,17 @@ The scripts only read arguments and call the package functions. Existing project
 PYTHONPATH=src python scripts/prepare_behavior_v01.py \
     --artifacts /home/ubuntu/capstone-artifacts \
     --output /home/ubuntu/capstone-artifacts/<new folder> \
-    --reuse-qc /home/ubuntu/capstone-artifacts/behavior_v01_20261001/qc
+    --train-proportion 0.8 --test-proportion 0.1 --intervention-proportion 0.1 \
+    --split-seed 42
 ```
 
-This writes `labels.csv`, `split_manifest.csv`, `counts.json` and the `qc/` packet. `counts.json` also records the Git commit and the hashes of the rule files that produced the labels. The collection run folders are read and never changed. Activation tensors stay outside Git.
+This writes `labels.csv`, `split_manifest.csv`, `counts.json` and the `qc/` packet. `counts.json` also records the Git commit, the hashes of the rule files that produced the labels, the partition proportions and seed, and the partition audit. The collection run folders are read and never changed. Activation tensors stay outside Git.
 
 ```python
 from mas_sae.data.production import load_labeled_rows, load_production_activations
 
 rows, manifest = load_labeled_rows("<artifacts>/natural_4b_full/results", "<package folder>")
-train = [r for r in rows if r["canonical_split"] == "discovery" and r["label"]["eligible_primary"]]
+train = [r for r in rows if r["partition"] == "train" and r["label"]["eligible_primary"]]
 y = [r["label"]["primary_target"] for r in train]
 X = load_production_activations(train, manifest, "<artifacts>/natural_4b_full/data",
                                 purpose="fit", layer=17, attempt=2)   # attempt=1 is before feedback
@@ -156,5 +173,5 @@ X = load_production_activations(train, manifest, "<artifacts>/natural_4b_full/da
 ## Next steps
 
 1. Two annotators complete the blind packet; measure agreement; adjust rules if needed and freeze Behavior v1.
-2. Probe and SAE work (Raye, Josh) uses discovery questions only, with a text baseline and a breakdown by Critic correctness. An early look on discovery data suggested A2 activations predict adoption better than the feedback text does (balanced accuracy about 0.84 versus 0.75); that is unvalidated and is theirs to reproduce properly.
-3. Held-out validation is run once, on a frozen configuration.
+2. Probe and SAE work (Raye, Josh) fits on the train partition and chooses on validation, with a text baseline and a breakdown by Critic correctness. An early look on the old discovery role suggested A2 activations predict adoption better than the feedback text does (balanced accuracy about 0.84 versus 0.75); that is unvalidated and is theirs to reproduce properly on the new partitions.
+3. Test is scored once, on the frozen checkpoint; intervention is used only for the causal experiment.

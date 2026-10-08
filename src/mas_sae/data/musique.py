@@ -12,6 +12,8 @@ from datasets import load_dataset
 MUSIQUE_DATASET_ID = "dgslibisey/MuSiQue"
 SUPPORTED_SOURCE_SPLITS = {"train", "validation"}
 SUPPORTED_EXPERIMENT_SPLITS = ("discovery", "validation", "intervention")
+# The frozen research partitions (see mas_sae.data.production).
+SUPPORTED_PARTITIONS = ("train", "validation", "test", "intervention")
 PROPORTION_TOLERANCE = 1e-6
 
 _HOP_GROUP_PATTERN = re.compile(r"^(\d+)hop")
@@ -254,15 +256,16 @@ def validate_experiment_split_proportions(
     proportions: dict[str, float],
     *,
     name: str = "experiment_split.proportions",
+    supported_splits: tuple[str, ...] = SUPPORTED_EXPERIMENT_SPLITS,
 ) -> None:
-    """Validate split proportions and that names are supported splits."""
+    """Validate split proportions and that names are a subset of ``supported_splits``."""
     validate_proportions(proportions, name=name)
 
-    unknown = set(proportions) - set(SUPPORTED_EXPERIMENT_SPLITS)
+    unknown = set(proportions) - set(supported_splits)
     if unknown:
         raise ValueError(
             f"{name} has unsupported names {sorted(unknown)}; expected a "
-            f"subset of {list(SUPPORTED_EXPERIMENT_SPLITS)}."
+            f"subset of {list(supported_splits)}."
         )
 
 
@@ -390,8 +393,9 @@ def assign_experiment_splits(
     *,
     proportions: dict[str, float],
     seed: int,
+    supported_splits: tuple[str, ...] = SUPPORTED_EXPERIMENT_SPLITS,
 ) -> dict[str, str]:
-    """Assign every question id to exactly one experiment split.
+    """Assign every question id to exactly one split.
 
     Assignment is done at question level, never at episode level, so the
     three critic episodes generated from one question always share a split.
@@ -404,17 +408,23 @@ def assign_experiment_splits(
     question_ids
         Unique MuSiQue question ids in collection order.
     proportions
-        Mapping from experiment split name to fraction. Names must be a
-        subset of ``SUPPORTED_EXPERIMENT_SPLITS``.
+        Mapping from split name to fraction. Names must be a subset of
+        ``supported_splits``.
     seed
         Seed for the shuffle inside each hop group.
+    supported_splits
+        The split names the caller allows. Collection uses the default
+        ``SUPPORTED_EXPERIMENT_SPLITS``; the frozen research partitions pass
+        their own names.
 
     Returns
     -------
     dict[str, str]
-        Mapping from question id to experiment split.
+        Mapping from question id to split.
     """
-    validate_experiment_split_proportions(proportions)
+    validate_experiment_split_proportions(
+        proportions, supported_splits=supported_splits
+    )
 
     ids = [str(question_id) for question_id in question_ids]
 
