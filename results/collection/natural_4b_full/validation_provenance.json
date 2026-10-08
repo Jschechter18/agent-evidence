@@ -1,0 +1,37 @@
+{
+  "created_at_utc": "2026-09-30T15:19:32.659076+00:00",
+  "config_sha256": "a18fe413c1e046254fd70a9faf4ff2ff4985037a2225d004e3a9b43eae571c61",
+  "manifest_sha256": "8725764a3986eafb2a4c0b574fb0eda798dbadd27fca43dbeff986278a71f2ca",
+  "dataset_revision": "c8f4f8c9465fb69d31a8eae894c3fd509c4ca321",
+  "model_revisions": {
+    "solver": {
+      "requested_revision": "093f9f388b31de276ce2de164bdc2081324b9767",
+      "resolved_revision": "093f9f388b31de276ce2de164bdc2081324b9767"
+    },
+    "critic": {
+      "requested_revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
+      "resolved_revision": "cdbee75f17c01a7cc42f958dc650907174af0554"
+    },
+    "validator": {
+      "requested_revision": "093f9f388b31de276ce2de164bdc2081324b9767",
+      "resolved_revision": "093f9f388b31de276ce2de164bdc2081324b9767"
+    }
+  },
+  "git_commit": "4e00dd22fd4a5f3b7e53d57aaa54a283eef71814",
+  "git_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "untracked_code_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "package_versions": {
+    "torch": "2.13.0",
+    "transformers": "5.17.0",
+    "datasets": "5.0.1"
+  },
+  "gpus": [
+    "NVIDIA A10G"
+  ],
+  "hash_basis": {
+    "config_sha256": "canonical JSON of the collection config without its output section",
+    "manifest_sha256": "canonical JSON of ordered {question_id, experiment_split, hop_group}",
+    "git_diff_sha256": "sha256 of `git diff --binary HEAD` (tracked files only)",
+    "untracked_code_sha256": "sha256 of names and bytes of untracked, non-ignored files under src/ and scripts/"
+  }
+}

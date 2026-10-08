@@ -21,6 +21,13 @@ Questions that were part of earlier development data (the layer scan or the
 first 100-row QC sample) are flagged. The flag records that a question was
 available then, not that it was used in any decision. Held-out results can
 be reported with and without these questions.
+
+The cut is only reproducible from the exact same question set: remove one
+question and the seeded shuffle moves many others. So the assignment is made
+once and then frozen in ``partitions.csv`` (``PARTITION_FIELDS``), which is
+committed to the repository. Every later run, including a re-collection,
+takes its partitions from that file (``build_partition_manifest(frozen=...)``)
+and only rebuilds the activation indices; it never derives membership again.
 """
 from collections import Counter
 import csv
@@ -70,6 +77,15 @@ MANIFEST_FIELDS = [
 ]
 
 INTERVENTION_IDS_FILE = "intervention_question_ids.json"
+
+# The frozen mapping: the manifest columns that never change between runs.
+# Which file a repository is bound to is configuration; the scripts name it.
+PARTITION_FIELDS = ["question_id", "source_split", "partition", "hop_group"]
+PARTITIONS_FILE = "partitions.csv"
+MISSING_IDS_FILE = "missing_question_ids.json"   # frozen questions a partial run did not collect
+
+# Whether a run is expected to contain every frozen question, or an intentional subset.
+COVERAGE_MODES = ("complete", "subset")
 
 
 def read_run_interactions(results_dir):
@@ -128,8 +144,27 @@ def assign_partitions(question_ids_by_source, *, proportions, seed):
     return assignment
 
 
-def build_partition_manifest(full_rows, scan_rows=(), qc100_ids=(), *, proportions, seed):
-    """Build {question_id: record} from the full run, the layer scan and the old QC sample."""
+def build_partition_manifest(full_rows, scan_rows=(), qc100_ids=(), *, proportions=None, seed=None,
+                             frozen=None, coverage="complete"):
+    """Build {question_id: record} from the full run, the layer scan and the old QC sample.
+
+    Without ``frozen`` the partition is derived: ``proportions`` and ``seed``
+    are required and ``assign_partitions`` cuts the collected question set.
+    That is the first-time path, and its result depends on the exact set of
+    collected ids.
+
+    With ``frozen`` (from ``read_partitions``) membership is never recomputed:
+    every collected question keeps the partition recorded there and only the
+    activation indices are rebuilt from the rows. A collected id that is not
+    in ``frozen`` raises; adding questions is a new manifest version decided by
+    a person, not here. With ``coverage="complete"`` a frozen question that was
+    not collected raises too; ``coverage="subset"`` allows it, for runs that
+    deliberately cover part of the question set such as the layer scan.
+    """
+    if frozen is None and (proportions is None or seed is None):
+        raise ValueError("proportions and seed are required when no frozen mapping is given")
+    if frozen is not None and (proportions is not None or seed is not None):
+        raise ValueError("proportions and seed are not used with a frozen mapping; pass one or the other")
     qc100_ids = set(qc100_ids)
     _check_indices_are_unique(full_rows, "full")
     _check_indices_are_unique(scan_rows, "scan")
@@ -168,12 +203,64 @@ def build_partition_manifest(full_rows, scan_rows=(), qc100_ids=(), *, proportio
         record["scan_index"] = _activation_index(row)
         record["in_development_data"] = True
 
+    if frozen is not None:
+        apply_frozen_partitions(manifest, frozen, coverage=coverage)
+        return manifest
+
     ids_by_source = {}
     for record in manifest.values():
         ids_by_source.setdefault(record["source_split"], []).append(record["question_id"])
     for qid, partition in assign_partitions(ids_by_source, proportions=proportions, seed=seed).items():
         manifest[qid]["partition"] = partition
 
+    return manifest
+
+
+def apply_frozen_partitions(manifest, frozen, *, coverage="complete"):
+    """Give every manifest record the partition ``frozen`` holds for it; derive nothing.
+
+    Raises on a collected id that is not in ``frozen``, on a source split or hop
+    group that disagrees with it, and, for ``coverage="complete"``, on a frozen
+    question that was not collected. Returns ``partition_coverage(manifest, frozen)``.
+    """
+    if coverage not in COVERAGE_MODES:
+        raise ValueError(f"coverage must be one of {list(COVERAGE_MODES)}, got {coverage!r}")
+    unknown = sorted(set(manifest) - set(frozen))
+    if unknown:
+        raise ValueError(f"{len(unknown)} collected question(s) are not in the frozen mapping "
+                         f"(e.g. {unknown[:3]}); adding questions needs a new manifest version")
+    for qid, record in manifest.items():
+        fixed = frozen[qid]
+        for field in ("source_split", "hop_group"):
+            if record[field] != fixed[field]:
+                raise ValueError(f"{qid}: {field} is {record[field]!r} in the run but "
+                                 f"{fixed[field]!r} in the frozen mapping")
+        record["partition"] = fixed["partition"]
+    result = partition_coverage(manifest, frozen)
+    if coverage == "complete" and result["missing"]:
+        raise ValueError(f"{result['missing']} frozen question(s) were not collected "
+                         f"(e.g. {result['missing_ids'][:3]}); a complete run must contain every "
+                         "frozen question, or pass coverage='subset' for an intentional subset")
+    return result
+
+
+def partition_coverage(manifest, frozen):
+    """How much of the frozen mapping a run covers: counts and the ids it lacks."""
+    missing_ids = sorted(set(frozen) - set(manifest))
+    return {"expected": len(frozen), "collected": len(manifest),
+            "missing": len(missing_ids), "missing_ids": missing_ids}
+
+
+def check_manifest_matches_frozen(manifest, frozen):
+    """Raise unless every manifest question has the partition and source split ``frozen`` records."""
+    for qid, record in manifest.items():
+        fixed = frozen.get(qid)
+        if fixed is None:
+            raise ValueError(f"{qid}: in the manifest but not in the frozen mapping")
+        for field in ("source_split", "partition"):
+            if record[field] != fixed[field]:
+                raise ValueError(f"{qid}: {field} is {record[field]!r} in the manifest but "
+                                 f"{fixed[field]!r} in the frozen mapping")
     return manifest
 
 
@@ -230,6 +317,74 @@ def read_manifest(path):
         for field in ("full_index", "scan_index"):
             record[field] = int(record[field]) if record[field] else None
     return {record["question_id"]: record for record in records}
+
+
+def write_partitions(path, manifest):
+    """Write the frozen mapping: the manifest columns that never change between runs."""
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=PARTITION_FIELDS)
+        writer.writeheader()
+        for record in manifest.values():
+            writer.writerow({field: record[field] for field in PARTITION_FIELDS})
+
+
+def write_package_tables(output_dir, manifest, frozen=None):
+    """Write a package's ``split_manifest.csv``, ``partitions.csv`` and, for a partial run,
+    ``missing_question_ids.json``.
+
+    ``split_manifest.csv`` describes this run: its questions and its activation
+    indices. ``partitions.csv`` is the permanent authority, so with ``frozen`` it
+    is the frozen mapping itself, complete and in its original order, however
+    much of it the run covers; a subset run must never leave a truncated copy
+    behind. Without ``frozen`` (the first derivation) it is taken from the
+    manifest. Returns ``partition_coverage(manifest, frozen)``, or ``None`` when
+    there is no frozen mapping.
+    """
+    output_dir = Path(output_dir)
+    write_manifest(output_dir / "split_manifest.csv", manifest)
+    if frozen is None:
+        write_partitions(output_dir / PARTITIONS_FILE, manifest)
+        return None
+    write_partitions(output_dir / PARTITIONS_FILE, frozen)
+    coverage = partition_coverage(manifest, frozen)
+    if coverage["missing"]:
+        (output_dir / MISSING_IDS_FILE).write_text(json.dumps(coverage["missing_ids"], indent=2) + "\n")
+    return coverage
+
+
+def read_partitions(path):
+    """Read a frozen mapping and check it is well formed.
+
+    Accepts ``partitions.csv`` or a full ``split_manifest.csv`` (extra columns
+    are ignored). Returns {question_id: {question_id, source_split, partition,
+    hop_group}}. Raises on a repeated id, an unknown source split or partition,
+    a hop group that does not follow from the id, and a MuSiQue-validation
+    question outside ``validation`` (or a MuSiQue-train question inside it).
+    """
+    with open(path, newline="") as f:
+        reader = csv.DictReader(f)
+        missing_columns = [field for field in PARTITION_FIELDS if field not in (reader.fieldnames or [])]
+        if missing_columns:
+            raise ValueError(f"{path}: missing columns {missing_columns}")
+        records = list(reader)
+    frozen = {}
+    for record in records:
+        qid = record["question_id"]
+        if qid in frozen:
+            raise ValueError(f"{path}: question {qid} appears twice")
+        if record["source_split"] not in SUPPORTED_SOURCE_SPLITS:
+            raise ValueError(f"{path}: {qid}: unknown source split {record['source_split']!r}")
+        if record["partition"] not in PARTITIONS:
+            raise ValueError(f"{path}: {qid}: unknown partition {record['partition']!r}")
+        if record["hop_group"] != hop_group(qid):
+            raise ValueError(f"{path}: {qid}: hop group {record['hop_group']!r} does not match the id")
+        if (record["source_split"] == "validation") != (record["partition"] == "validation"):
+            raise ValueError(f"{path}: {qid}: MuSiQue-{record['source_split']} question in partition "
+                             f"{record['partition']!r}; only MuSiQue-validation questions are 'validation'")
+        frozen[qid] = {field: record[field] for field in PARTITION_FIELDS}
+    if not frozen:
+        raise ValueError(f"{path}: no questions")
+    return frozen
 
 
 def authorize_rows(rows, manifest, *, purpose):

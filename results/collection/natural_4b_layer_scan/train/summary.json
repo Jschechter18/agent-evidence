@@ -1,0 +1,168 @@
+{
+  "run_name": "natural_4b_layer_scan",
+  "source_split": "train",
+  "num_questions": 2000,
+  "num_episodes": 2000,
+  "num_excluded": 0,
+  "sae_rows_per_layer": 4000,
+  "behavior_schema_versions": [
+    "lexical_v2"
+  ],
+  "behavior_matching_basis": "normalized_text_not_semantic",
+  "solver_behavior_counts": {
+    "adopted_critic": 530,
+    "ambiguous": 746,
+    "no_conflict": 640,
+    "retained_solver_a1": 14,
+    "third_answer_revision": 70
+  },
+  "critic_position_counts": {
+    "ambiguous_or_unresolved": 337,
+    "different_nonrefusal_candidate": 777,
+    "refusal_or_nonanswer": 246,
+    "same_position": 640
+  },
+  "legacy_acceptance_counts": {
+    "accepted": 1435,
+    "rejected": 449,
+    "unlabeled_noncommittal": 116
+  },
+  "site_shapes": {
+    "layer_08": {
+      "attempt1": [
+        2000,
+        2560
+      ],
+      "attempt2": [
+        2000,
+        2560
+      ],
+      "sae": [
+        4000,
+        2560
+      ]
+    },
+    "layer_12": {
+      "attempt1": [
+        2000,
+        2560
+      ],
+      "attempt2": [
+        2000,
+        2560
+      ],
+      "sae": [
+        4000,
+        2560
+      ]
+    },
+    "layer_17": {
+      "attempt1": [
+        2000,
+        2560
+      ],
+      "attempt2": [
+        2000,
+        2560
+      ],
+      "sae": [
+        4000,
+        2560
+      ]
+    },
+    "layer_21": {
+      "attempt1": [
+        2000,
+        2560
+      ],
+      "attempt2": [
+        2000,
+        2560
+      ],
+      "sae": [
+        4000,
+        2560
+      ]
+    },
+    "layer_25": {
+      "attempt1": [
+        2000,
+        2560
+      ],
+      "attempt2": [
+        2000,
+        2560
+      ],
+      "sae": [
+        4000,
+        2560
+      ]
+    },
+    "layer_28": {
+      "attempt1": [
+        2000,
+        2560
+      ],
+      "attempt2": [
+        2000,
+        2560
+      ],
+      "sae": [
+        4000,
+        2560
+      ]
+    },
+    "layer_30": {
+      "attempt1": [
+        2000,
+        2560
+      ],
+      "attempt2": [
+        2000,
+        2560
+      ],
+      "sae": [
+        4000,
+        2560
+      ]
+    },
+    "layer_31": {
+      "attempt1": [
+        2000,
+        2560
+      ],
+      "attempt2": [
+        2000,
+        2560
+      ],
+      "sae": [
+        4000,
+        2560
+      ]
+    },
+    "layer_33": {
+      "attempt1": [
+        2000,
+        2560
+      ],
+      "attempt2": [
+        2000,
+        2560
+      ],
+      "sae": [
+        4000,
+        2560
+      ]
+    }
+  },
+  "hop_group_counts": {
+    "2hop": 1423,
+    "3hop": 456,
+    "4hop": 121
+  },
+  "experiment_split_counts": {
+    "discovery": 1201,
+    "intervention": 399,
+    "validation": 400
+  }
+}

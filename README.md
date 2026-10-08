@@ -351,6 +351,14 @@ Run metadata and reproducibility information are saved under:
 
 This directory contains interactions.jsonl, resolved_config.yaml, and summary.json.
 
+The metadata of the finished production run (`natural_4b_full`: summaries,
+resolved configs, question lists, provenance) and of its partition export are
+committed under `results/collection/`. The labels, the partition manifest and
+the frozen question-to-partition mapping are committed under
+`results/behavior/behavior_v011_split80_10_10_20261006/`. Tensors and
+`interactions.jsonl` stay in S3. Any rerun takes its partitions from that
+mapping; see `docs/behavior_v01.md`, "Re-running the collection".
+
 ## SAE versions
 
 After each successful `scripts/train_sae.py` run, a row is appended to

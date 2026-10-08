@@ -1,0 +1,98 @@
+{
+  "run_name": "natural_4b_full",
+  "source_split": "validation",
+  "num_questions": 2413,
+  "num_episodes": 2413,
+  "num_excluded": 4,
+  "sae_rows_per_layer": 4826,
+  "behavior_schema_versions": [
+    "lexical_v2"
+  ],
+  "behavior_matching_basis": "normalized_text_not_semantic",
+  "solver_behavior_counts": {
+    "adopted_critic": 658,
+    "ambiguous": 915,
+    "no_conflict": 733,
+    "retained_solver_a1": 19,
+    "third_answer_revision": 88
+  },
+  "critic_position_counts": {
+    "ambiguous_or_unresolved": 369,
+    "different_nonrefusal_candidate": 924,
+    "refusal_or_nonanswer": 387,
+    "same_position": 733
+  },
+  "legacy_acceptance_counts": {
+    "accepted": 1718,
+    "rejected": 540,
+    "unlabeled_noncommittal": 155
+  },
+  "site_shapes": {
+    "layer_08": {
+      "attempt1": [
+        2413,
+        2560
+      ],
+      "attempt2": [
+        2413,
+        2560
+      ],
+      "sae": [
+        4826,
+        2560
+      ]
+    },
+    "layer_17": {
+      "attempt1": [
+        2413,
+        2560
+      ],
+      "attempt2": [
+        2413,
+        2560
+      ],
+      "sae": [
+        4826,
+        2560
+      ]
+    },
+    "layer_25": {
+      "attempt1": [
+        2413,
+        2560
+      ],
+      "attempt2": [
+        2413,
+        2560
+      ],
+      "sae": [
+        4826,
+        2560
+      ]
+    },
+    "layer_33": {
+      "attempt1": [
+        2413,
+        2560
+      ],
+      "attempt2": [
+        2413,
+        2560
+      ],
+      "sae": [
+        4826,
+        2560
+      ]
+    }
+  },
+  "hop_group_counts": {
+    "2hop": 1251,
+    "3hop": 757,
+    "4hop": 405
+  },
+  "experiment_split_counts": {
+    "discovery": 1447,
+    "intervention": 482,
+    "validation": 484
+  }
+}
