@@ -1,0 +1,138 @@
+roles:
+  solver:
+    id: google/gemma-3-4b-it
+    revision: 093f9f388b31de276ce2de164bdc2081324b9767
+    loader: gemma3
+    dtype: bfloat16
+    device: cuda:0
+    generation:
+      max_new_tokens: 64
+      do_sample: false
+  critic:
+    id: Qwen/Qwen3-4B-Instruct-2507
+    revision: cdbee75f17c01a7cc42f958dc650907174af0554
+    loader: qwen3
+    dtype: bfloat16
+    device: cuda:0
+    generation:
+      max_new_tokens: 256
+      do_sample: false
+  validator:
+    id: google/gemma-3-4b-it
+    revision: 093f9f388b31de276ce2de164bdc2081324b9767
+    loader: gemma3
+    dtype: bfloat16
+    device: cuda:0
+    generation:
+      max_new_tokens: 4
+      do_sample: false
+dataset:
+  revision: c8f4f8c9465fb69d31a8eae894c3fd509c4ca321
+  source_split: train
+  num_questions: 2000
+  sampling:
+    strategy: random
+  experiment_split:
+    proportions:
+      discovery: 0.6
+      validation: 0.2
+      intervention: 0.2
+collection:
+  protocol_version: v2
+  active_conditions:
+  - natural
+  layers:
+  - 8
+  - 12
+  - 17
+  - 21
+  - 25
+  - 28
+  - 30
+  - 31
+  - 33
+  seed: 42
+output:
+  run_name: natural_4b_layer_scan
+  chunk_size: 250
+provenance:
+  created_at_utc: '2026-09-29T21:10:27.082723+00:00'
+  git_commit: 81631b2187ca91e520eae17ad53fbc6727c50967
+  model_revision: 093f9f388b31de276ce2de164bdc2081324b9767
+  dataset_id: dgslibisey/MuSiQue
+  roles:
+    solver:
+      model_id: google/gemma-3-4b-it
+      requested_revision: 093f9f388b31de276ce2de164bdc2081324b9767
+      resolved_revision: 093f9f388b31de276ce2de164bdc2081324b9767
+      architecture: &id001
+      - Gemma3ForConditionalGeneration
+      loader: gemma3
+      dtype: torch.bfloat16
+      device: cuda:0
+      device_map: null
+      requested_placement: cuda:0
+      quantization: null
+      generation:
+        do_sample: false
+        max_new_tokens: 64
+      chat_template_kwargs: {}
+    critic:
+      model_id: Qwen/Qwen3-4B-Instruct-2507
+      requested_revision: cdbee75f17c01a7cc42f958dc650907174af0554
+      resolved_revision: cdbee75f17c01a7cc42f958dc650907174af0554
+      architecture:
+      - Qwen3ForCausalLM
+      loader: qwen3
+      dtype: torch.bfloat16
+      device: cuda:0
+      device_map: null
+      requested_placement: cuda:0
+      quantization: null
+      generation:
+        do_sample: false
+        max_new_tokens: 256
+      chat_template_kwargs: {}
+    validator:
+      model_id: google/gemma-3-4b-it
+      requested_revision: 093f9f388b31de276ce2de164bdc2081324b9767
+      resolved_revision: 093f9f388b31de276ce2de164bdc2081324b9767
+      architecture: *id001
+      loader: gemma3
+      dtype: torch.bfloat16
+      device: cuda:0
+      device_map: null
+      requested_placement: cuda:0
+      quantization: null
+      generation:
+        do_sample: false
+        max_new_tokens: 4
+      chat_template_kwargs: {}
+  environment:
+    git_dirty: false
+    cuda_version: '13.0'
+    gpus:
+    - NVIDIA A10G
+  active_conditions:
+  - natural
+  package_versions:
+    torch: 2.13.0
+    transformers: 5.17.0
+    datasets: 5.0.1
+  protocol_version: v2
+  capabilities:
+    blind_then_compare: true
+    controlled_as_own_conclusion: true
+    type_checked_target: true
+  prompt_versions:
+    solver_solve: SOLVE_PROMPT_V1
+    solver_revise: REVISE_PROMPT_V1
+    critic_natural: NATURAL_BLIND_PROMPT+NATURAL_COMPARE_PROMPT
+    critic_controlled: CONTROLLED_OWN_CONCLUSION_PROMPT
+    critic_distractor: DISTRACTOR_PROMPT
+    validator: VALIDATE_PROMPT
+  generation:
+    do_sample: null
+    solver_max_new_tokens: 64
+    critic_max_new_tokens: 256
+    validator_max_new_tokens: 4
