@@ -1,14 +1,9 @@
-# Re-collection of the Natural-condition 4B run: MuSiQue validation (2,417).
-# Same models, revisions, budgets, layers and seed as natural_4b_full_validation.yaml,
-# under a NEW run name so nothing of the recorded run is overwritten. Pairs with
-# natural_4b_rerun_train.yaml under the same run_name.
-#
-# Partitions are not assigned here; see natural_4b_rerun_train.yaml. The
-# historical experiment_split block is deliberately absent.
-#
-# sampling.strategy random over all 2,417 questions selects the whole split
-# in a seeded shuffled order, so a partial run still mixes hop groups.
-# Resumable: rerun with --resume after interruption.
+# Smoke test for the nine-layer collection: 30 MuSiQue-train questions with
+# exactly the settings of natural_4b_full9_train.yaml, under its own run name.
+# Two purposes: prove the nine-layer path end to end (tensors, indices,
+# frozen-partition package, export), and measure drift against the recorded
+# four-layer run, which covered every train question, by comparing A1, the
+# Critic's feedback and A2 for the same question ids.
 
 roles:
   solver:
@@ -37,17 +32,17 @@ roles:
 
 dataset:
   revision: c8f4f8c9465fb69d31a8eae894c3fd509c4ca321
-  source_split: validation
-  num_questions: 2417
+  source_split: train
+  num_questions: 30
   sampling:
     strategy: random
 
 collection:
   protocol_version: v2
   active_conditions: [natural]
-  layers: [8, 17, 25, 33]
+  layers: [4, 8, 17, 25, 29, 30, 31, 32, 33]
   seed: 42
 
 output:
-  run_name: natural_4b_rerun
-  chunk_size: 250
+  run_name: natural_4b_full9_smoke_30q
+  chunk_size: 10

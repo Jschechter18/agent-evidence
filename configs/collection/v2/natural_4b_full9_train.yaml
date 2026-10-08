@@ -1,15 +1,17 @@
-# Re-collection of the Natural-condition 4B run: MuSiQue train (19,938).
-# Same models, revisions, budgets, layers and seed as natural_4b_full_train.yaml,
-# under a NEW run name so nothing of the recorded run is overwritten. Pairs with
-# natural_4b_rerun_validation.yaml under the same run_name.
+# Nine-layer Natural-condition 4B collection: MuSiQue train (19,938).
+# Same models, revisions, budgets and seed as the recorded four-layer run
+# (natural_4b_full_train.yaml); nine layers instead of four, under a NEW run
+# name so nothing of the recorded run is overwritten. Pairs with
+# natural_4b_full9_validation.yaml under the same run_name.
 #
 # Partitions are not assigned here. After collecting, build the package with
-#     scripts/prepare_behavior_v01.py --full-results <...>/natural_4b_rerun/results \
+#     scripts/prepare_behavior_v01.py --full-results <...>/natural_4b_full9/results \
 #         --frozen-partitions results/behavior/behavior_v011_split80_10_10_20261006/partitions.csv
 # which keeps every question's recorded partition and rebuilds only the
 # activation indices. The historical experiment_split block is deliberately
 # absent; `partition` in the frozen mapping is the only authority.
 #
+# Layers requested for SAE training (Gemma-3-4B has 34 decoder layers, 0-33).
 # sampling.strategy random over all 19,938 questions selects the whole split
 # in a seeded shuffled order, so a partial run still mixes hop groups.
 # Resumable: rerun with --resume after interruption.
@@ -49,9 +51,9 @@ dataset:
 collection:
   protocol_version: v2
   active_conditions: [natural]
-  layers: [8, 17, 25, 33]
+  layers: [4, 8, 17, 25, 29, 30, 31, 32, 33]
   seed: 42
 
 output:
-  run_name: natural_4b_rerun
+  run_name: natural_4b_full9
   chunk_size: 250
