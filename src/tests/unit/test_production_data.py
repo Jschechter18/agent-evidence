@@ -10,6 +10,7 @@ import torch
 from mas_sae.data.production import (
     INTERVENTION_IDS_FILE,
     MANIFEST_FIELDS,
+    MISSING_IDS_FILE,
     PARTITION_FIELDS,
     PARTITIONS,
     PARTITIONS_FILE,
@@ -26,6 +27,7 @@ from mas_sae.data.production import (
     read_partitions,
     split_audit,
     write_manifest,
+    write_package_tables,
     write_partitions,
 )
 from mas_sae.evaluation.behavior_v01 import classify_candidate, write_labels
@@ -509,6 +511,39 @@ def test_subset_run_keeps_its_questions_partitions():
     coverage = partition_coverage(subset, frozen_from(first))
     assert coverage["collected"] == len(scan) and coverage["expected"] == len(full)
     assert coverage["missing"] == len(full) - len(scan) == len(coverage["missing_ids"])
+
+
+def test_subset_package_keeps_the_complete_frozen_partitions_file(tmp_path):
+    full = train_rows(60) + [row(f"2hop__v{k}_{k}", i=k, source="validation") for k in range(10)]
+    first = manifest_for(full)
+    write_partitions(tmp_path / "frozen.csv", first)
+    frozen = read_partitions(tmp_path / "frozen.csv")
+
+    # A subset run: its manifest is the subset, its partitions file is the whole frozen mapping.
+    scan = recollected(full[::3], seed=5)
+    package = tmp_path / "subset"
+    package.mkdir()
+    coverage = write_package_tables(package, build_partition_manifest(scan, frozen=frozen, coverage="subset"),
+                                    frozen)
+    assert (package / PARTITIONS_FILE).read_bytes() == (tmp_path / "frozen.csv").read_bytes()
+    assert set(read_manifest(package / "split_manifest.csv")) == {r["question_id"] for r in scan}
+    assert json.loads((package / MISSING_IDS_FILE).read_text()) == coverage["missing_ids"]
+    assert coverage["missing"] == len(full) - len(scan) > 0
+
+    # A complete rerun: same frozen file, nothing missing, no missing-ids file.
+    package = tmp_path / "complete"
+    package.mkdir()
+    coverage = write_package_tables(package, build_partition_manifest(recollected(full, seed=1), frozen=frozen),
+                                    frozen)
+    assert coverage["missing"] == 0 and not (package / MISSING_IDS_FILE).exists()
+    assert (package / PARTITIONS_FILE).read_bytes() == (tmp_path / "frozen.csv").read_bytes()
+
+    # The first derivation has no frozen mapping yet: the partitions file comes from the manifest.
+    package = tmp_path / "derived"
+    package.mkdir()
+    assert write_package_tables(package, first) is None
+    assert read_partitions(package / PARTITIONS_FILE) == frozen
+    assert not (package / MISSING_IDS_FILE).exists()
 
 
 def test_unknown_question_bad_source_split_and_mixed_arguments_are_refused():

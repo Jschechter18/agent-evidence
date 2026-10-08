@@ -47,15 +47,12 @@ import yaml
 
 from mas_sae.data.production import (
     COVERAGE_MODES,
-    PARTITIONS_FILE,
     build_partition_manifest,
     check_scan_repeats_full_run,
-    partition_coverage,
     read_partitions,
     read_run_interactions,
     split_audit,
-    write_manifest,
-    write_partitions,
+    write_package_tables,
 )
 from mas_sae.evaluation.behavior_qc import (
     check_qc_packet,
@@ -79,7 +76,6 @@ from mas_sae.experiments.artifacts import (
 FULL_RESULTS = "natural_4b_full/results"
 SCAN_RESULTS = "issue69_natural_4b_layer_scan/results/collection/natural_4b_layer_scan"
 FIRST_QC_SAMPLE = "issue55_human_qc/sample_manifest.json"
-MISSING_IDS_FILE = "missing_question_ids.json"
 QC_GUIDE = Path(__file__).resolve().parents[1] / "docs" / "qc_guide.md"
 
 # The modules whose code decides the labels; their hashes go into counts.json.
@@ -160,36 +156,35 @@ def main():
     if deriving:
         proportions = {"train": args.train_proportion, "test": args.test_proportion,
                        "intervention": args.intervention_proportion}
+        frozen = None
         manifest = build_partition_manifest(full_rows, scan_rows, qc100_ids,
                                             proportions=proportions, seed=args.split_seed)
-        coverage = None
-        partition_record = {"proportions_of_source_train": proportions, "seed": args.split_seed,
-                            "rule": "MuSiQue-validation -> validation; MuSiQue-train cut by sorted "
-                                    "question id, stratified by hop group"}
     else:
         frozen = read_partitions(args.frozen_partitions)
         manifest = build_partition_manifest(full_rows, scan_rows, qc100_ids,
                                             frozen=frozen, coverage=args.coverage)
-        coverage = partition_coverage(manifest, frozen)
-        partition_record = {"frozen_partitions": str(args.frozen_partitions),
-                            "frozen_partitions_sha256": sha256_file(args.frozen_partitions),
-                            "coverage": args.coverage,
-                            "questions": {k: coverage[k] for k in ("expected", "collected", "missing")},
-                            "rule": "membership taken from the frozen mapping; only activation "
-                                    "indices were rebuilt for this run"}
 
     # 2. Label every episode of the full run.
     for row in full_rows:
         row["partition"] = manifest[row["question_id"]]["partition"]
         row["label"] = classify_candidate(row)
 
-    # 3. Write the tables and the counts.
+    # 3. Write the tables and the counts. partitions.csv is the frozen mapping
+    #    in full whenever one is in use, however much of it this run covers.
     args.output.mkdir(parents=True)
     write_labels(args.output / "labels.csv", full_rows)
-    write_manifest(args.output / "split_manifest.csv", manifest)
-    write_partitions(args.output / PARTITIONS_FILE, manifest)
-    if coverage is not None and coverage["missing"]:
-        (args.output / MISSING_IDS_FILE).write_text(json.dumps(coverage["missing_ids"], indent=2) + "\n")
+    coverage = write_package_tables(args.output, manifest, frozen)
+    if deriving:
+        partition_record = {"proportions_of_source_train": proportions, "seed": args.split_seed,
+                            "rule": "MuSiQue-validation -> validation; MuSiQue-train cut by sorted "
+                                    "question id, stratified by hop group"}
+    else:
+        partition_record = {"frozen_partitions": str(args.frozen_partitions),
+                            "frozen_partitions_sha256": sha256_file(args.frozen_partitions),
+                            "coverage": args.coverage,
+                            "questions": {k: coverage[k] for k in ("expected", "collected", "missing")},
+                            "rule": "membership taken from the frozen mapping; only activation "
+                                    "indices were rebuilt for this run"}
 
     train_rows = [row for row in full_rows if row["source_split"] == "train"]
     validation_rows = [row for row in full_rows if row["source_split"] == "validation"]

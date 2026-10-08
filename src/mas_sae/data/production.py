@@ -82,6 +82,7 @@ INTERVENTION_IDS_FILE = "intervention_question_ids.json"
 # Which file a repository is bound to is configuration; the scripts name it.
 PARTITION_FIELDS = ["question_id", "source_split", "partition", "hop_group"]
 PARTITIONS_FILE = "partitions.csv"
+MISSING_IDS_FILE = "missing_question_ids.json"   # frozen questions a partial run did not collect
 
 # Whether a run is expected to contain every frozen question, or an intentional subset.
 COVERAGE_MODES = ("complete", "subset")
@@ -325,6 +326,30 @@ def write_partitions(path, manifest):
         writer.writeheader()
         for record in manifest.values():
             writer.writerow({field: record[field] for field in PARTITION_FIELDS})
+
+
+def write_package_tables(output_dir, manifest, frozen=None):
+    """Write a package's ``split_manifest.csv``, ``partitions.csv`` and, for a partial run,
+    ``missing_question_ids.json``.
+
+    ``split_manifest.csv`` describes this run: its questions and its activation
+    indices. ``partitions.csv`` is the permanent authority, so with ``frozen`` it
+    is the frozen mapping itself, complete and in its original order, however
+    much of it the run covers; a subset run must never leave a truncated copy
+    behind. Without ``frozen`` (the first derivation) it is taken from the
+    manifest. Returns ``partition_coverage(manifest, frozen)``, or ``None`` when
+    there is no frozen mapping.
+    """
+    output_dir = Path(output_dir)
+    write_manifest(output_dir / "split_manifest.csv", manifest)
+    if frozen is None:
+        write_partitions(output_dir / PARTITIONS_FILE, manifest)
+        return None
+    write_partitions(output_dir / PARTITIONS_FILE, frozen)
+    coverage = partition_coverage(manifest, frozen)
+    if coverage["missing"]:
+        (output_dir / MISSING_IDS_FILE).write_text(json.dumps(coverage["missing_ids"], indent=2) + "\n")
+    return coverage
 
 
 def read_partitions(path):

@@ -154,7 +154,7 @@ This writes `labels.csv`, `split_manifest.csv`, `partitions.csv`, `counts.json` 
 
 ## Re-running the collection without moving a single question
 
-The cut above is reproducible only from the exact same question set. Remove one question and the seeded shuffle moves many others: on the real run, dropping one question moved between 131 and 2,780 other questions. So the assignment was made once and is frozen in `partitions.csv`, committed at `results/behavior/behavior_v011_split80_10_10_20261006/partitions.csv` next to the `split_manifest.csv`, `labels.csv` and `counts.json` it came from. Every later run takes its partitions from that file and never derives them again:
+The cut above is reproducible only from the exact same question set. Removing even one question can move many other assignments when the split is re-derived. So the assignment was made once and is frozen in `partitions.csv`, committed at `results/behavior/behavior_v011_split80_10_10_20261006/partitions.csv` next to the `split_manifest.csv`, `labels.csv` and `counts.json` it came from. Every later run takes its partitions from that file and never derives them again:
 
 ```bash
 PYTHONPATH=src python scripts/prepare_behavior_v01.py \
@@ -168,6 +168,7 @@ What this guarantees:
 
 - A question keeps its partition whatever order the run collected it in. Only `full_index` / `scan_index`, the activation rows, are rebuilt for the new run.
 - `--coverage complete` (the default) stops if any frozen question is missing from the run. `--coverage subset` is for runs that deliberately cover part of the question set, such as a layer scan; the uncovered ids are written to `missing_question_ids.json` and counted in `counts.json["partition"]["questions"]`.
+- Every package built from the frozen file carries the whole frozen mapping as its `partitions.csv`, byte for byte, however much of it the run covers. Only `split_manifest.csv` is run-specific.
 - A question the frozen file does not know stops the run. Adding questions is a new manifest version made by a person, not something the script decides.
 - The rerun's `split_manifest.csv` has the same columns as before, so every reader (`read_manifest`, the export, the layer-selection loader) works unchanged.
 - `scripts/export_partition_activations.py` checks the package manifest against the frozen file before writing anything, so a package built under a different cut is refused.
