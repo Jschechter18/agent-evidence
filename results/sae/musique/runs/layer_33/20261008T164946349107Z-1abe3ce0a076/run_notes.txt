@@ -1,1 +1,0 @@
-This run uses the topk approach
