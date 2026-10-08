@@ -1,0 +1,3 @@
+Notes:
+    - generalization gap -> overfitting
+    - only uses about 20% of the features at any given point -> this needs to change somehow
