@@ -19,7 +19,8 @@ from mas_sae.experiments.artifacts import (
     update_run_manifest,
     write_run_config,
     write_sae_provenance,
-    write_run_history
+    write_run_history,
+    write_json_atomic,
 )
 from mas_sae.experiments.reproducibility import seed_everything
 from mas_sae.sae.hyperparamters import Hyperparameters as HP
@@ -148,6 +149,9 @@ def main():
                 if hp.sparsity_mode == "l1" else "reconstruction_loss"
             ),
             "selection_metric": "val_loss",
+            "variance_explained": "1 - reconstruction SSE / SSE around the training-mean activation; null if baseline SSE is zero.",
+            "persistent_inactivity": "No positive activation in the last inactivity_window_examples training examples; null until that many examples have been observed. Evaluations do not update counters.",
+            "firing_frequencies": "Fraction of examples with positive activation per feature; percentiles include unused features.",
             "sparsity_mechanism": (
                 "L1 activation penalty" if hp.sparsity_mode == "l1" else
                 "Per-example TopK of nonnegative encoder activations."
@@ -163,7 +167,11 @@ def main():
             factor=0.1,
         )
         
-        runner = ModelRunner(model, sparsity_coefficient=hp.sparsity_coefficient, optimizer=optimizer)
+        runner = ModelRunner(
+            model, sparsity_coefficient=hp.sparsity_coefficient, optimizer=optimizer,
+            training_mean=train_activations.float().mean(dim=0),
+            inactivity_window_examples=hp.inactivity_window_examples,
+        )
         
         checkpoint_evaluator = CheckpointEvaluatorCallback(run_directory / "checkpoints")
         early_stopping = EarlyStoppingCallback(hp.patience)
@@ -178,21 +186,15 @@ def main():
             scheduler.step(val_metrics["loss"])
             checkpoint_evaluator.on_validation_end(train_metrics, val_metrics, epoch,
                                                    model, optimizer, scheduler)
-            epoch_history.append({
-                "epoch": epoch+1,
-                "learning_rate": optimizer.param_groups[0]["lr"],  # After scheduler.step(); used for the next epoch.
-                "train_loss": train_metrics["loss"],
-                "val_loss": val_metrics["loss"],
-                "train_rec_loss": train_metrics["rec_loss"],
-                "val_rec_loss": val_metrics["rec_loss"],
-                "train_weighted_sparsity_loss": train_metrics["weighted_sparsity_loss"],
-                "train_mean_active_features": train_metrics["mean_active_features"],
-                "val_mean_active_features": val_metrics["mean_active_features"],
-                "val_weighted_sparsity_loss": val_metrics["weighted_sparsity_loss"],
-                "train_inactive_feature_fraction": train_metrics["inactive_feature_fraction"],
-                "val_inactive_feature_fraction": val_metrics["inactive_feature_fraction"],
-                })
-            
+            epoch_metrics = {
+                "epoch": epoch + 1,
+                # After scheduler.step(); used for the next epoch.
+                "learning_rate": optimizer.param_groups[0]["lr"],
+            }
+            for prefix, metrics in (("train", train_metrics), ("val", val_metrics)):
+                epoch_metrics.update({f"{prefix}_{key}": value for key, value in metrics.items()})
+            epoch_history.append(epoch_metrics)
+
             write_run_history(run_directory, epoch_history)
             
             if early_stopping.on_validation_end(val_metrics["loss"]):
@@ -200,16 +202,26 @@ def main():
                 print(f"Early stopping after epoch {epoch+1}")
                 break
         
-        test_metrics = None
+        model = load_sae_checkpoint(
+            run_directory / "checkpoints" / "best_checkpoint.pt", device=device,
+        )
+        runner.model = model
+        # Use identical frozen weights for every split; no training-state updates.
+        frozen_metrics = {}
+        feature_frequencies = {}
+        evaluation_loaders = {"train": train_dataloader, "validation": val_dataloader}
         if test_dataloader is not None:
-            model = load_sae_checkpoint(
-                run_directory / "checkpoints" / "best_checkpoint.pt",
-                device=device,
-            )
-            runner.model = model
-            test_metrics = runner.test(test_dataloader)
+            evaluation_loaders["test"] = test_dataloader
+        for split, dataloader in evaluation_loaders.items():
+            frozen_metrics[split] = runner.val_epoch(dataloader)
+            frequencies = runner.last_feature_frequencies
+            if frequencies is None:
+                raise RuntimeError(f"Evaluation did not produce feature frequencies for {split}.")
+            feature_frequencies[split] = frequencies.tolist()
+        test_metrics = frozen_metrics.get("test")
+        if test_metrics is not None:
             print(f"Test Loss: {test_metrics['loss']:.4f}")
-        
+
         best_epoch_metrics = min(epoch_history, key=lambda metrics: metrics["val_loss"])
                             
         summary = {
@@ -219,15 +231,20 @@ def main():
             "epochs_completed": len(epoch_history),
             "stop_reason": stop_reason,
             "best_epoch": best_epoch_metrics["epoch"],
-            "best_val_metrics":
-                {
-                    "loss": best_epoch_metrics["val_loss"],
-                    "rec_loss": best_epoch_metrics["val_rec_loss"],
-                    "weighted_sparsity_loss": best_epoch_metrics["val_weighted_sparsity_loss"],
-                    "mean_active_features": best_epoch_metrics["val_mean_active_features"],
-                    "inactive_feature_fraction": best_epoch_metrics["val_inactive_feature_fraction"],
-                }
+            "frozen_checkpoint_metrics": frozen_metrics,
+            "feature_frequencies_path": "feature_frequencies.json",
+            "best_val_metrics": {
+                key.removeprefix("val_"): value
+                for key, value in best_epoch_metrics.items() if key.startswith("val_")
+            },
         }
+
+        write_json_atomic(run_directory / "feature_frequencies.json", {
+            "checkpoint": "checkpoints/best_checkpoint.pt",
+            "epoch": best_epoch_metrics["epoch"],
+            "definition": "Fraction of split examples with a positive activation; array index is latent feature index.",
+            "frequencies": feature_frequencies,
+        })
 
         write_run_history(
             run_directory,
