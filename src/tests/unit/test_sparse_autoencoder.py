@@ -73,3 +73,42 @@ def test_forward_supports_backpropagation(model: SparseAutoencoder) -> None:
     for parameter in model.parameters():
         assert parameter.grad is not None
         assert torch.isfinite(parameter.grad).all()
+
+
+def test_input_scale_preserves_features_and_restores_output_units(model: SparseAutoencoder) -> None:
+    activations = torch.randn(4, INPUT_DIM)
+    features, reconstruction = model(activations)
+    model.input_scale.fill_(3.0)
+
+    scaled_features, scaled_reconstruction = model(activations * 3.0)
+
+    assert torch.allclose(scaled_features, features, atol=1e-6)
+    assert torch.allclose(scaled_reconstruction, reconstruction * 3.0, atol=1e-6)
+
+
+def test_checkpoint_restores_scale_and_outputs(model: SparseAutoencoder, tmp_path) -> None:
+    model.input_scale.fill_(7.0)
+    path = tmp_path / "model.pt"
+    torch.save(model.state_dict(), path)
+    restored = SparseAutoencoder(INPUT_DIM, HIDDEN_DIM, LATENT_DIM)
+    restored.load_state_dict(torch.load(path, weights_only=True))
+    activations = torch.randn(4, INPUT_DIM)
+
+    assert restored.input_scale.item() == 7.0
+    assert "input_scale" not in dict(restored.named_parameters())
+    for expected, actual in zip(model(activations), restored(activations)):
+        assert torch.equal(actual, expected)
+
+
+def test_decoder_normalization_constrains_columns_and_preserves_bias(model: SparseAutoencoder) -> None:
+    weight = model.decoder_layer[0].weight
+    assert torch.allclose(weight.norm(dim=0), torch.ones(LATENT_DIM), atol=1e-6)
+    bias = model.decoder_layer[0].bias.detach().clone()
+    with torch.no_grad():
+        weight.mul_(torch.arange(1, LATENT_DIM + 1))
+
+    model.normalize_decoder_weights()
+
+    assert model.decoder_layer[0].weight is weight
+    assert torch.allclose(weight.norm(dim=0), torch.ones(LATENT_DIM), atol=1e-6)
+    assert torch.equal(model.decoder_layer[0].bias, bias)

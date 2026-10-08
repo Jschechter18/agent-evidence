@@ -4,12 +4,10 @@ Master's Data Science Capstone project.
 
 ## Messages for Professor/AI Reviewer:
 
-# Instructor Review 1 Response:
+# Instructor Review 3 Response:
 
-- src contains a module that we are using to create reusable code. We are doing so and using scripts to actually run our pipeline
-- we will have shell scripts that run separately in src/shellscripts
-- Scripts is used to actually run our code. We package up whatever we can make reusable in the module, and call it in individual scripts files. Think of scripts as something as a frontend for our module. (we obviously can make a real UI later for demo purposes if necessary)
--
+- we no longer require Conditions B and C for the controlled incorrect/incorrect feedback. We spoke with Professor Jafari and he approved and agreed, saying to leave you a note inside the README.md file informing you that this is no longer part of our experiment.
+- We are confused about the branch protection ruleset. We added rulesets to protect main already. Not sure why this is still being flagged.
 
 ## Getting Started
 
@@ -129,6 +127,182 @@ After modifying `environment.yml`, update your environment:
 conda env update -f environment.yml --prune
 ```
 
+## Persistent Storage with Amazon S3
+
+Generated activations and SAE checkpoints are not committed to Git. The team uses Amazon S3 to transfer these artifacts between compute instances and preserve them outside an individual EC2 instance.
+
+Remote artifacts are stored under:
+
+```text
+s3://dats-capstone/shared/group3/
+```
+
+### Install the AWS CLI
+
+On the course Ubuntu EC2 instance, install AWS CLI v2 for the current user:
+
+```bash
+curl -fsSL https://awscli.amazonaws.com/v2/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
+hash -r
+```
+
+Verify the installation:
+
+```bash
+aws --version
+```
+
+See the [official AWS CLI installation instructions](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) for other platforms.
+
+### Configure School SSO Access
+
+The course account uses AWS IAM Identity Center. Do not use long-lived IAM access keys.
+
+1. Sign in to the school AWS access portal.
+2. Expand the assigned AWS account.
+3. Find the student role.
+4. Select **Access keys**.
+5. Under **AWS IAM Identity Center credentials (Recommended)**, copy the:
+   - SSO start URL
+   - SSO region
+
+Configure a named CLI profile:
+
+```bash
+aws configure sso --profile school --use-device-code
+```
+
+Use the following values when prompted:
+
+```text
+SSO session name: school
+SSO start URL: <copy from the AWS access portal>
+SSO region: us-east-1
+SSO registration scopes: sso:account:access
+Default client Region: us-east-1
+CLI default output format: json
+```
+
+If asked whether to configure AWS skills and an AWS MCP server, select **No**. They are not required for S3 synchronization.
+
+The device-login process displays a URL and code. Open the URL on a computer with a browser, enter the code, and authorize the school AWS session.
+
+For subsequent sessions, renew authentication with:
+
+```bash
+aws sso login --profile school --use-device-code
+```
+
+Verify the active identity:
+
+```bash
+aws sts get-caller-identity --profile school
+```
+
+If this command reports expired credentials, rerun `aws sso login`.
+
+### S3 Directory Layout
+
+Local paths are mirrored beneath the group S3 prefix:
+
+| Local path          | S3 prefix                                            |
+| ------------------- | ---------------------------------------------------- |
+| `data/activations/` | `s3://dats-capstone/shared/group3/data/activations/` |
+| `results/sae/`      | `s3://dats-capstone/shared/group3/results/sae/`      |
+
+### Upload Activations
+
+Always preview a synchronization first:
+
+```bash
+aws s3 sync \
+  data/activations/ \
+  s3://dats-capstone/shared/group3/data/activations/ \
+  --dryrun \
+  --profile school
+```
+
+If the preview is correct, upload the files:
+
+```bash
+aws s3 sync \
+  data/activations/ \
+  s3://dats-capstone/shared/group3/data/activations/ \
+  --profile school
+```
+
+Verify the remote contents:
+
+```bash
+aws s3 ls \
+  s3://dats-capstone/shared/group3/data/activations/ \
+  --recursive \
+  --profile school
+```
+
+### Download Activations
+
+To restore activations from S3, reverse the source and destination:
+
+```bash
+aws s3 sync \
+  s3://dats-capstone/shared/group3/data/activations/ \
+  data/activations/ \
+  --dryrun \
+  --profile school
+```
+
+After reviewing the preview:
+
+```bash
+aws s3 sync \
+  s3://dats-capstone/shared/group3/data/activations/ \
+  data/activations/ \
+  --profile school
+```
+
+### Upload an SAE Checkpoint Directory
+
+Replace `<layer>` and `<run-id>` with the applicable experiment values:
+
+```bash
+aws s3 sync \
+  results/sae/musique/runs/<layer>/<run-id>/checkpoints/ \
+  s3://dats-capstone/shared/group3/results/sae/musique/runs/<layer>/<run-id>/checkpoints/ \
+  --dryrun \
+  --profile school
+```
+
+After reviewing the preview, remove `--dryrun`:
+
+```bash
+aws s3 sync \
+  results/sae/musique/runs/<layer>/<run-id>/checkpoints/ \
+  s3://dats-capstone/shared/group3/results/sae/musique/runs/<layer>/<run-id>/checkpoints/ \
+  --profile school
+```
+
+To restore that checkpoint directory, reverse the paths:
+
+```bash
+aws s3 sync \
+  s3://dats-capstone/shared/group3/results/sae/musique/runs/<layer>/<run-id>/checkpoints/ \
+  results/sae/musique/runs/<layer>/<run-id>/checkpoints/ \
+  --profile school
+```
+
+### Synchronization Safety
+
+- Use `--dryrun` before uploads and downloads.
+- Do not use `--delete` unless remote or local deletion is explicitly intended.
+- `sync` skips matching files and transfers missing or changed files.
+- Uploading to an existing S3 key can replace that object.
+- S3 authentication does not change the local `ActivationStore`; experiments continue reading and writing local paths.
+- Never commit or share AWS access keys, secret keys, session tokens, or screenshots containing them.
+- Do not place AWS credentials in `data_sync.py`, configuration files, notebooks, or the repository.
+- An `AccessDenied` error means authentication succeeded but the school role lacks permission for the requested bucket or prefix.
+
 ## Jupyter Notebooks
 
 After environment is set up, when using a jupyter notebook, make sure to run the following command to ensure you can select the capstone environment inside the kernel:
@@ -176,6 +350,20 @@ Run metadata and reproducibility information are saved under:
     results/collection/<run_name>/<split>/
 
 This directory contains interactions.jsonl, resolved_config.yaml, and summary.json.
+
+## SAE versions
+
+After each successful `scripts/train_sae.py` run, a row is appended to
+`results/sae/musique/runs/layer_<N>/sae_versions.csv`. Columns are `run_id`,
+`checkpoint_path` (relative to the repository root), `commit`, `test_score`,
+and `best_val_score`. Scores are reconstruction MSE plus the sparsity penalty;
+lower is better. Missing test scores are written as literal `null`.
+
+The checkpoint path points to `best_checkpoint.pt`, and test evaluation, when
+available, uses that checkpoint. Repeating an append for the same run ID leaves
+the existing row unchanged. Later evaluation of an existing version requires
+updating its row rather than appending a new version. CSV appends use a file lock
+on Linux/macOS so simultaneous runs do not duplicate headers or lose rows.
 
 Here `<split>` is the MuSiQue source split (train or validation), which mixes
 the research partitions. For SAE and probe work use an exported partition run

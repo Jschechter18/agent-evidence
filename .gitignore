@@ -50,7 +50,7 @@ logs/
 # Generated activation tensors
 /data/activations/
 
-# SAE training artifacts
-/results/sae/
+# SAE training checkpoints
+results/sae/musique/runs/*/*/checkpoints/
 
 /logs/

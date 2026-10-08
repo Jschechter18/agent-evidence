@@ -1,0 +1,4 @@
+General notes:
+    - tried a more aggressive sparcity penalty (0.03) to decrease the amount of acitve features
+
+    

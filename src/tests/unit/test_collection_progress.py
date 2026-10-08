@@ -337,7 +337,9 @@ def test_source_splits_resume_independently_and_share_sae_directory(tmp_path):
     assert {p.name for p in location.glob("*.pt")} == {
         f"{split}{suffix}.pt" for split in ids_by_split for suffix in ("", "_attempt1", "_attempt2")}
     for split, ids in ids_by_split.items():
-        loader = create_sae_dataloader(batch_size=4, split=split, num_workers=0, location=location)
+        loader = create_sae_dataloader(
+            batch_size=4, split=split, num_workers=0, location=location, shuffle=False,
+        )
         assert torch.equal(next(iter(loader)), torch.tensor([[42.] * 3, [43.] * 3, [42.5] * 3, [43.5] * 3]))
         records = read_jsonl(result_root / run_name / split / "interactions.jsonl")
         assert [r["question_id"] for r in records] == ids

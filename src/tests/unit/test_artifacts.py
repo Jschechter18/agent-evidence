@@ -1,10 +1,41 @@
+import csv
 import json
+import subprocess
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from mas_sae.experiments import artifacts
+
+
+@pytest.mark.parametrize("dirty", [False, True])
+def test_sae_provenance_preserves_status_before_run_creation(tmp_path, monkeypatch, dirty):
+    monkeypatch.chdir(tmp_path)
+    subprocess.run(["git", "init", "-q"], check=True)
+    activation_path = tmp_path / "train.pt"
+    activation_path.write_bytes(b"original activations")
+    subprocess.run(["git", "add", "train.pt"], check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-qm", "Initial inputs"],
+        check=True,
+    )
+    if dirty:
+        activation_path.write_bytes(b"changed activations")
+
+    snapshot = artifacts.get_git_provenance()
+    run = artifacts.create_sae_run_directory("test", 33, results_root=tmp_path / "results")
+    # The unignored run files dirty the repository, but must not alter its saved snapshot.
+    assert artifacts.get_git_provenance()["git_dirty"] is True
+    artifacts.write_sae_provenance(run, {"train": activation_path}, snapshot)
+
+    manifest = json.loads((run / "manifest.json").read_text())
+    assert manifest["git_dirty"] is dirty
+    assert "results/" not in manifest["git_status"]
+    assert manifest["git_diff"] == snapshot["git_diff"]
+    assert bool(manifest["git_diff"]) is dirty
+    assert manifest["activation_files"]["train"]["sha256"] == artifacts.sha256_file(activation_path)
 
 
 def test_build_run_id_uses_timestamp_and_short_commit() -> None:
@@ -179,3 +210,58 @@ def test_sha256_helpers_are_canonical(tmp_path) -> None:
     path = tmp_path / "file.txt"
     path.write_bytes("é".encode("utf-8"))
     assert artifacts.sha256_file(path) == artifacts.sha256_text("é")
+
+
+def make_completed_sae_run(root, run_id, layer=33, activation_run_name="natural_4b_layer_scan"):
+    run = root / "runs" / f"layer_{layer:02d}" / run_id
+    (run / "checkpoints").mkdir(parents=True)
+    (run / "checkpoints" / "best_checkpoint.pt").touch()
+    (run / "manifest.json").write_text(json.dumps({
+        "run_id": run_id, "git_commit": "abc123", "status": "completed",
+    }))
+    (run / "config.json").write_text(json.dumps({
+        "activation_run_name": activation_run_name,
+    }))
+    return run
+
+
+def test_append_sae_versions_creates_appends_and_deduplicates(tmp_path):
+    first = make_completed_sae_run(tmp_path, "first")
+    second = make_completed_sae_run(
+        tmp_path, "second", activation_run_name="natural_4b_layer_scan_partitioned",
+    )
+    path = artifacts.append_sae_version(first, project_root=tmp_path, best_val_score=2.5)
+    artifacts.append_sae_version(second, project_root=tmp_path, best_val_score=1.5, test_score=1.8)
+    before = path.read_bytes()
+    artifacts.append_sae_version(first, project_root=tmp_path, best_val_score=2.5)
+    assert path.read_bytes() == before
+    with path.open(newline="") as file:
+        rows = list(csv.DictReader(file))
+    assert rows == [
+        {"run_id": "first", "checkpoint_path": "runs/layer_33/first/checkpoints/best_checkpoint.pt",
+         "activation_run_name": "natural_4b_layer_scan",
+         "commit": "abc123", "test_score": "null", "best_val_score": "2.5"},
+        {"run_id": "second", "checkpoint_path": "runs/layer_33/second/checkpoints/best_checkpoint.pt",
+         "activation_run_name": "natural_4b_layer_scan_partitioned",
+         "commit": "abc123", "test_score": "1.8", "best_val_score": "1.5"},
+    ]
+    other = make_completed_sae_run(tmp_path, "third", layer=17)
+    other_path = artifacts.append_sae_version(other, project_root=tmp_path, best_val_score=3.0)
+    assert other_path.parent.name == "layer_17"
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("invalid", ["failed", "running", "missing_checkpoint"])
+def test_append_sae_version_rejects_unavailable_versions(tmp_path, invalid):
+    run = make_completed_sae_run(tmp_path, "first")
+    if invalid == "missing_checkpoint":
+        (run / "checkpoints" / "best_checkpoint.pt").unlink()
+        error = FileNotFoundError
+    else:
+        manifest = json.loads((run / "manifest.json").read_text())
+        manifest["status"] = invalid
+        (run / "manifest.json").write_text(json.dumps(manifest))
+        error = ValueError
+    with pytest.raises(error):
+        artifacts.append_sae_version(run, project_root=tmp_path, best_val_score=2.5)
+    assert not (run.parent / "sae_versions.csv").exists()

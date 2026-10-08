@@ -13,17 +13,17 @@ def training_components():
     torch.manual_seed(0)
     model = nn.Linear(2, 1)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    scheduler = torch.optim.lr_scheduler.StepLR(
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
-        step_size=2,
-        gamma=0.1,
+        patience=2,
+        factor=0.1,
     )
 
     # Populate Adam's state so the checkpoint verifies more than an empty dict.
     loss = model(torch.ones(1, 2)).sum()
     loss.backward()
     optimizer.step()
-    scheduler.step()
+    scheduler.step(loss.item())
 
     return model, optimizer, scheduler
 
@@ -38,8 +38,8 @@ def test_checkpoint_evaluator_saves_complete_loadable_checkpoint(
     evaluator = CheckpointEvaluatorCallback(checkpoint_directory)
 
     evaluator.on_validation_end(
-        train_loss=0.6,
-        val_loss=0.5,
+        train_metrics={"loss": 0.6},
+        val_metrics={"loss": 0.5},
         epoch=2,
         model=model,
         optimizer=optimizer,
@@ -58,10 +58,10 @@ def test_checkpoint_evaluator_saves_complete_loadable_checkpoint(
 
     restored_model = nn.Linear(2, 1)
     restored_optimizer = torch.optim.Adam(restored_model.parameters(), lr=1e-3)
-    restored_scheduler = torch.optim.lr_scheduler.StepLR(
+    restored_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         restored_optimizer,
-        step_size=2,
-        gamma=0.1,
+        patience=2,
+        factor=0.1,
     )
     restored_model.load_state_dict(checkpoint["model_state_dict"])
     restored_optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -84,8 +84,8 @@ def test_checkpoint_evaluator_does_not_save_without_improvement(
     evaluator.best_loss = 0.4
 
     evaluator.on_validation_end(
-        train_loss=0.6,
-        val_loss=0.5,
+        train_metrics={"loss": 0.6},
+        val_metrics={"loss": 0.5},
         epoch=1,
         model=model,
         optimizer=optimizer,
@@ -96,9 +96,11 @@ def test_checkpoint_evaluator_does_not_save_without_improvement(
     assert evaluator.best_loss == pytest.approx(0.4)
 
 
-def test_checkpoint_evaluator_preserves_best_checkpoint_when_loss_worsens(
+@pytest.mark.parametrize("next_val_loss", [0.5, 0.6])
+def test_checkpoint_evaluator_preserves_best_checkpoint_without_improvement(
     tmp_path: Path,
     training_components,
+    next_val_loss: float,
 ) -> None:
     model, optimizer, scheduler = training_components
     checkpoint_directory = tmp_path / "checkpoints"
@@ -106,16 +108,16 @@ def test_checkpoint_evaluator_preserves_best_checkpoint_when_loss_worsens(
     evaluator = CheckpointEvaluatorCallback(checkpoint_directory)
 
     evaluator.on_validation_end(
-        train_loss=0.6,
-        val_loss=0.5,
+        train_metrics={"loss": 0.6},
+        val_metrics={"loss": 0.5},
         epoch=0,
         model=model,
         optimizer=optimizer,
         scheduler=scheduler,
     )
     evaluator.on_validation_end(
-        train_loss=0.7,
-        val_loss=0.6,
+        train_metrics={"loss": 0.7},
+        val_metrics={"loss": next_val_loss},
         epoch=1,
         model=model,
         optimizer=optimizer,
