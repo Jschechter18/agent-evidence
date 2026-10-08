@@ -1,0 +1,10 @@
+Stage,What changed?,Usable questions,Critic copied Solver,Genuinely different answer,Blind answer retained (substantive),Solver changed answer,Final exact accuracy,Main lesson
+"Original Natural, Gemma","baseline prompt, 128 tokens",92,89/92 (96.7%),0,n/a,21/100 (21.0%),18/100 (18.0%),disagree verdicts were not different answers
+"Blind-first, Gemma",critic answers before seeing the Solver,93,87/93 (93.5%),1,1/46 (2.2%),16/100 (16.0%),18/100 (18.0%),"independent answer formed, then abandoned"
+"Stronger position-preservation wording, Gemma",critic told to keep its own position,95,92/95 (96.8%),0,0/46 (0.0%),20/100 (20.0%),21/100 (21.0%),this wording change did not prevent the collapse
+"Locked blind position, Gemma",harness fixes the critic's answer to its blind answer,100,fixed by design,49 (blind answers that differed),fixed by design,57/100 (57.0%),23/100 (23.0%),"independent feedback moves the Solver, but the protocol changed and reviews were cut"
+Qwen 128-token treatment-quality check,"different critic, same 128-token budget",29,17/29 (58.6%),12,n/a,32/100 (32.0%),22/100 (22.0%),71 outputs cut at 128 tokens; downstream numbers invalid
+"Gemma one-step, 256 tokens","baseline prompt, 256 tokens",98,94/98 (95.9%),0,n/a,20/100 (20.0%),18/100 (18.0%),the collapse is not a budget artefact
+"Gemma blind-first, 256 tokens","blind-first, 256 tokens",99,92/99 (92.9%),1,1/49 (2.0%),15/100 (15.0%),19/100 (19.0%),same as at 128 tokens
+"Qwen one-step, 256 tokens","different-family critic, 256 tokens",89,37/89 (41.6%),46,n/a,52/100 (52.0%),19/100 (19.0%),far more independent positions
+"Qwen blind-first, 256 tokens","different-family critic, blind-first, 256 tokens",91,29/91 (31.9%),55,46/62 (74.2%),64/100 (64.0%),19/100 (19.0%),retains its own answer; final accuracy unchanged
