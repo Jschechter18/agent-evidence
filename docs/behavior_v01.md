@@ -175,7 +175,7 @@ What this guarantees:
 
 `partitions.csv` fields: `question_id`; `source_split`, the MuSiQue split the question came from; `partition`, the only column anyone reads to choose data; `hop_group`, what the stratification used. Everything else in `split_manifest.csv` (`collection_split`, `scan_split`, the development flags, the two index columns) describes one run and is rebuilt per run.
 
-For a future collection use `configs/collection/v2/natural_4b_rerun_*.yaml`: the same models, budgets, layers and seed as the recorded run, a new run name, and no collection-time `experiment_split`. The historical configs are left as they were, because the resumable collection checks them.
+The nine-layer collection `natural_4b_full9` (`configs/collection/v2/natural_4b_full9_{train,validation}.yaml`) is the first run built this way: the same models, budgets and seed as the recorded four-layer run, layers 4, 8, 17, 25, 29, 30, 31, 32 and 33, a new run name, and no collection-time `experiment_split`. Its 30-question smoke config (`natural_4b_full9_smoke_30q.yaml`) doubles as a drift check against the recorded run, which covered every train question. The historical configs are left as they were, because the resumable collection checks them. A package nobody will annotate, such as a smoke or subset package, is built with `--no-qc`.
 
 ```python
 from mas_sae.data.production import load_labeled_rows, load_production_activations

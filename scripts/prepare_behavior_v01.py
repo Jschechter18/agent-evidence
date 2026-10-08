@@ -82,6 +82,34 @@ QC_GUIDE = Path(__file__).resolve().parents[1] / "docs" / "qc_guide.md"
 RULE_MODULES = (behavior_v01, behavior, scoring)
 
 
+def write_qc_packet(args, full_dir, full_rows):
+    """Write the blind annotation packet: reuse the issued one, or sample a new one."""
+    qc_dir = args.output / "qc"
+    qc_dir.mkdir()
+    if args.reuse_qc:
+        key, sampling = reuse_qc_packet(args.reuse_qc, qc_dir)
+    else:
+        run_config = yaml.safe_load((full_dir / "train" / "resolved_config.yaml").read_text())
+        chosen, key, sampling = choose_qc_rows(full_rows, args.seed)
+        paragraphs = source_paragraphs([row["question_id"] for row in chosen],
+                                       run_config["dataset"]["revision"])
+        write_annotator_files(qc_dir, chosen, key, paragraphs)
+
+    rows_by_question = {row["question_id"]: row for row in full_rows}
+    check_qc_packet(qc_dir, key, rows_by_question)
+
+    # The private key also holds our own labels, to score the annotations later.
+    for entry in key:
+        row = rows_by_question[entry["question_id"]]
+        entry["lexical_v2_label"] = row["solver_behavior"]
+        entry["feedback_type"] = row["label"]["feedback_type"]
+        entry["solver_response"] = row["label"]["solver_response"]
+        entry["eligible_primary"] = row["label"]["eligible_primary"]
+    (qc_dir / "private_key.json").write_text(json.dumps(key, indent=2) + "\n")
+    write_json_atomic(qc_dir / "sampling.json", sampling)
+    shutil.copyfile(QC_GUIDE, qc_dir / "INSTRUCTIONS.md")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -101,6 +129,8 @@ def main():
                         help="new folder for the package")
     parser.add_argument("--reuse-qc", type=Path,
                         help="qc/ folder of an issued packet to keep unchanged")
+    parser.add_argument("--no-qc", action="store_true",
+                        help="write no QC packet; for smoke and subset packages that will not be annotated")
     parser.add_argument("--seed", type=int, default=42,
                         help="used only when a new QC packet is sampled")
     parser.add_argument("--frozen-partitions", type=Path,
@@ -209,30 +239,9 @@ def main():
     write_json_atomic(args.output / "counts.json", counts)
 
     # 4. The blind QC packet: reuse the issued one, or sample a new one.
-    qc_dir = args.output / "qc"
-    qc_dir.mkdir()
-    if args.reuse_qc:
-        key, sampling = reuse_qc_packet(args.reuse_qc, qc_dir)
-    else:
-        run_config = yaml.safe_load((full_dir / "train" / "resolved_config.yaml").read_text())
-        chosen, key, sampling = choose_qc_rows(full_rows, args.seed)
-        paragraphs = source_paragraphs([row["question_id"] for row in chosen],
-                                       run_config["dataset"]["revision"])
-        write_annotator_files(qc_dir, chosen, key, paragraphs)
-
-    rows_by_question = {row["question_id"]: row for row in full_rows}
-    check_qc_packet(qc_dir, key, rows_by_question)
-
-    # The private key also holds our own labels, to score the annotations later.
-    for entry in key:
-        row = rows_by_question[entry["question_id"]]
-        entry["lexical_v2_label"] = row["solver_behavior"]
-        entry["feedback_type"] = row["label"]["feedback_type"]
-        entry["solver_response"] = row["label"]["solver_response"]
-        entry["eligible_primary"] = row["label"]["eligible_primary"]
-    (qc_dir / "private_key.json").write_text(json.dumps(key, indent=2) + "\n")
-    write_json_atomic(qc_dir / "sampling.json", sampling)
-    shutil.copyfile(QC_GUIDE, qc_dir / "INSTRUCTIONS.md")
+    #    Skipped with --no-qc, for packages nobody will annotate.
+    if not args.no_qc:
+        write_qc_packet(args, full_dir, full_rows)
 
     # 5. Confirm the inputs are untouched and print a short summary.
     if {str(path): sha256_file(path) for path in input_files} != hashes_before:
