@@ -4,8 +4,44 @@ import pytest
 import torch
 from torch import nn
 
-from mas_sae.sae.callbacks.checkpointing import CheckpointEvaluatorCallback
+from mas_sae.sae.callbacks.checkpointing import CheckpointEvaluatorCallback, load_sae_checkpoint
+from mas_sae.sae.sparse_autoencoder import SparseAutoencoder
 from mas_sae.sae.callbacks.early_stopping import EarlyStoppingCallback
+
+
+@pytest.mark.parametrize("mode,k", [("l1", None), ("topk", 2)])
+def test_sae_checkpoint_restores_architecture_and_outputs(tmp_path, mode, k):
+    model = SparseAutoencoder(4, 8, 6, mode, k)
+    model.input_scale.fill_(7.0)
+    optimizer = torch.optim.Adam(model.parameters())
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
+    callback = CheckpointEvaluatorCallback(tmp_path)
+    callback.on_validation_end({"loss": 1.0}, {"loss": 0.5}, 0, model, optimizer, scheduler)
+    restored = load_sae_checkpoint(tmp_path / "best_checkpoint.pt")
+    assert restored.sparsity_mode == mode
+    assert restored.top_k == k
+    assert not restored.training
+    x = torch.randn(3, 4)
+    for expected, actual in zip(model(x), restored(x)):
+        assert torch.equal(expected, actual)
+
+
+def test_legacy_checkpoint_uses_run_config(tmp_path):
+    import json
+    model = SparseAutoencoder(4, 8, 6)
+    checkpoint_dir = tmp_path / "checkpoints"
+    checkpoint_dir.mkdir()
+    path = checkpoint_dir / "best_checkpoint.pt"
+    torch.save({"model_state_dict": model.state_dict()}, path)
+    with pytest.raises(ValueError, match="lacks model_config"):
+        load_sae_checkpoint(path)
+    (tmp_path / "config.json").write_text(json.dumps({
+        "input_dim": 4, "hidden_dim": 8, "latent_dim": 6,
+    }))
+    restored = load_sae_checkpoint(path)
+    assert restored.sparsity_mode == "l1"
+    x = torch.randn(3, 4)
+    assert torch.equal(restored.encoder(x), model.encoder(x))
 
 
 @pytest.fixture

@@ -3,8 +3,20 @@ from torch import nn, Tensor
 
 
 class SparseAutoencoder(nn.Module):
-    def __init__(self, input_dim: int, hidden_dim: int, latent_dim: int):
+    def __init__(
+        self, input_dim: int, hidden_dim: int, latent_dim: int,
+        sparsity_mode: str = "l1", top_k: int | None = None,
+    ):
         super().__init__()
+        if sparsity_mode not in {"l1", "topk"}:
+            raise ValueError("sparsity_mode must be 'l1' or 'topk'.")
+        if sparsity_mode == "topk" and (
+            not isinstance(top_k, int) or isinstance(top_k, bool)
+            or not 1 <= top_k <= latent_dim
+        ):
+            raise ValueError("TopK requires an integer top_k between 1 and latent_dim.")
+        self.sparsity_mode = sparsity_mode
+        self.top_k = top_k
         
         self.input_dim = input_dim
         self.output_dim = input_dim # added this for clarity
@@ -36,7 +48,11 @@ class SparseAutoencoder(nn.Module):
         Tensor
             Sparse feature vector. This is a sparse representation of the activation input.
         """
-        return self.encoder_layer(activation / self.input_scale)
+        features = self.encoder_layer(activation / self.input_scale)
+        if self.sparsity_mode == "topk" and self.top_k:
+            values, indices = torch.topk(features, k=self.top_k, dim=-1)
+            features = torch.zeros_like(features).scatter(-1, indices, values)
+        return features
         
     
     def decoder(self, sparse_features: Tensor) -> Tensor:

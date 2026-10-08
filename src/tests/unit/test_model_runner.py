@@ -12,6 +12,18 @@ from mas_sae.sae.model_runner import ModelRunner
 from mas_sae.sae.sparse_autoencoder import SparseAutoencoder
 
 
+@pytest.mark.parametrize("runner_method", ["train_epoch", "val_epoch", "test"])
+def test_topk_metrics_record_zero_l1_and_reconstruction_objective(runner_method):
+    model = SparseAutoencoder(4, 8, 6, "topk", 2)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    runner = ModelRunner(model, sparsity_coefficient=100.0, optimizer=optimizer)
+    metrics = getattr(runner, runner_method)(DataLoader(torch.randn(5, 4), batch_size=2))
+    assert metrics["weighted_sparsity_loss"] == 0.0
+    assert metrics["loss"] == metrics["rec_loss"]
+    assert metrics["mean_active_features"] <= 2
+    assert json.loads(json.dumps(metrics))["weighted_sparsity_loss"] == 0.0
+
+
 class TrackingModel(nn.Module):
     """Small deterministic model that records the context of each forward pass."""
 
@@ -20,6 +32,7 @@ class TrackingModel(nn.Module):
         self.scale = nn.Parameter(torch.tensor(0.5))
         self.register_buffer("input_scale", torch.tensor(1.0))
         self.latent_dim = 2
+        self.sparsity_mode = "l1"
         self.normalization_calls = 0
         self.training_states: list[bool] = []
         self.grad_states: list[bool] = []
@@ -60,7 +73,7 @@ def disable_progress_bar(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_loss_fn_combines_reconstruction_and_weighted_sparsity_losses() -> None:
     runner = ModelRunner(
-        model=Mock(input_scale=torch.tensor(2.0)),
+        model=Mock(input_scale=torch.tensor(2.0), sparsity_mode="l1"),
         sparsity_coefficient=0.25,
         optimizer=Mock(),
     )
@@ -80,7 +93,7 @@ def test_common_passes_batch_to_model_and_returns_outputs() -> None:
     batch = torch.randn(3, 4)
     sparse_features = torch.randn(3, 6)
     reconstructed = torch.randn(3, 4)
-    model = Mock(return_value=(sparse_features, reconstructed), input_scale=torch.tensor(1.0))
+    model = Mock(return_value=(sparse_features, reconstructed), input_scale=torch.tensor(1.0), sparsity_mode="l1")
     model.parameters.return_value = iter([nn.Parameter(torch.zeros(1))])
     runner = ModelRunner(model=model, sparsity_coefficient=0.1, optimizer=Mock())
 
@@ -206,7 +219,7 @@ def test_empty_dataset_raises(runner_method: str) -> None:
 
 
 def test_zero_features_do_not_erase_reconstruction_loss() -> None:
-    model = Mock(input_scale=torch.tensor(1.0))
+    model = Mock(input_scale=torch.tensor(1.0), sparsity_mode="l1")
     runner = ModelRunner(model, 0.1, Mock())
     losses = runner._loss_fn(torch.zeros(2, 2), torch.ones(2, 2), torch.zeros(2, 3))
     assert losses["weighted_sparsity_loss"].item() == 0.0

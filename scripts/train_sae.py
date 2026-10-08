@@ -1,5 +1,9 @@
 """
-python scripts/train_sae.py --run-name natural_4b_layer_scan_partitioned --layer 33
+python scripts/train_sae.py \
+  --run-name natural_4b_layer_scan_partitioned \
+  --layer 33 \
+  --sparsity-mode topk \
+  --top-k 512
 """
 
 import argparse
@@ -22,7 +26,7 @@ from mas_sae.sae.hyperparamters import Hyperparameters as HP
 from mas_sae.sae.sparse_autoencoder import SparseAutoencoder as SAE
 from mas_sae.sae.dataloader import ActivationDataset, create_sae_dataloader
 from mas_sae.sae.model_runner import ModelRunner
-from mas_sae.sae.callbacks.checkpointing import CheckpointEvaluatorCallback
+from mas_sae.sae.callbacks.checkpointing import CheckpointEvaluatorCallback, load_sae_checkpoint
 from mas_sae.sae.callbacks.early_stopping import EarlyStoppingCallback
 
 
@@ -30,6 +34,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-name", type=str, required=True)
     parser.add_argument("--layer", type=int, required=True)
+    parser.add_argument("--sparsity-mode", choices=["topk", "l1"], default="l1")
+    parser.add_argument("--top-k", type=int, default=None)
     args = parser.parse_args()
 
     ACTIVATION_LOCATION = (
@@ -44,6 +50,13 @@ def main():
     subdirectories = ("checkpoints",)
     
     hp = HP()
+    hp.sparsity_mode = args.sparsity_mode
+    if args.top_k is not None:
+        hp.top_k = args.top_k
+    if hp.sparsity_mode == "topk" and (
+        hp.top_k is None or not 1 <= hp.top_k <= hp.latent_dim
+    ):
+        parser.error(f"TopK requires 1 <= top_k <= {hp.latent_dim}.")
     seed_everything(hp.seed)
     
     git_provenance = get_git_provenance()
@@ -104,6 +117,8 @@ def main():
             input_dim=hp.input_dim,
             hidden_dim=hp.hidden_dim,
             latent_dim=hp.latent_dim,
+            sparsity_mode=hp.sparsity_mode,
+            top_k=hp.top_k,
         ).to(device)
         
         assert isinstance(train_dataloader.dataset, ActivationDataset)
@@ -123,8 +138,20 @@ def main():
             "decoder_output": "Multiply reconstruction by the training RMS to restore original units.",
             "decoder_normalization": "Unit L2 norm per column at initialization and after each optimizer step.",
             "reconstruction_loss": "Mean squared error in RMS-normalized units over examples and input dimensions.",
-            "sparsity_loss": "Mean absolute latent activation over examples and features.",
-            "total_loss": "reconstruction_loss + sparsity_coefficient * sparsity_loss",
+            "sparsity_loss": (
+                "Mean absolute latent activation over examples and features."
+                if hp.sparsity_mode == "l1" else
+                "Not applied; weighted_sparsity_loss is recorded as zero for compatibility."
+            ),
+            "total_loss": (
+                "reconstruction_loss + sparsity_coefficient * sparsity_loss"
+                if hp.sparsity_mode == "l1" else "reconstruction_loss"
+            ),
+            "selection_metric": "val_loss",
+            "sparsity_mechanism": (
+                "L1 activation penalty" if hp.sparsity_mode == "l1" else
+                "Per-example TopK of nonnegative encoder activations."
+            ),
         })
         write_run_config(run_directory, config)
         
@@ -175,18 +202,20 @@ def main():
         
         test_metrics = None
         if test_dataloader is not None:
-            checkpoint = torch.load(
+            model = load_sae_checkpoint(
                 run_directory / "checkpoints" / "best_checkpoint.pt",
-                map_location=device,
-                weights_only=True,
+                device=device,
             )
-            model.load_state_dict(checkpoint["model_state_dict"])
+            runner.model = model
             test_metrics = runner.test(test_dataloader)
             print(f"Test Loss: {test_metrics['loss']:.4f}")
         
         best_epoch_metrics = min(epoch_history, key=lambda metrics: metrics["val_loss"])
                             
         summary = {
+            "sparsity_mode": hp.sparsity_mode,
+            "top_k": hp.top_k,
+            "total_loss": config["total_loss"],
             "epochs_completed": len(epoch_history),
             "stop_reason": stop_reason,
             "best_epoch": best_epoch_metrics["epoch"],

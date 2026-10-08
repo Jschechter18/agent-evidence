@@ -21,9 +21,12 @@ class ModelRunner:
         scale = self.model.input_scale
         rec_loss = F.mse_loss(reconstructed / scale, batch / scale)
         
-        l1_penalty = sparse_features.abs().mean()
-        weighted_sparsity_loss = self.sparsity_coefficient * l1_penalty
-        
+        if self.model.sparsity_mode == "l1":
+            l1_penalty = sparse_features.abs().mean()
+            weighted_sparsity_loss = self.sparsity_coefficient * l1_penalty
+        else:
+            weighted_sparsity_loss = rec_loss.new_zeros(())
+
         loss = rec_loss + weighted_sparsity_loss
         
         return {
