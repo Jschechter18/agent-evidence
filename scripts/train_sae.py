@@ -1,5 +1,13 @@
 """
-python scripts/train_sae.py --run-name natural_4b_layer_scan_partitioned --layer 33
+python scripts/train_sae.py \
+  --run-name natural_4b_partitioned \
+  --layer 33 \
+  --sparsity-mode topk \
+  --top-k 512
+  
+python scripts/train_sae.py \
+  --run-name natural_4b_partitioned \
+  --layer 33
 """
 
 import argparse
@@ -15,14 +23,15 @@ from mas_sae.experiments.artifacts import (
     update_run_manifest,
     write_run_config,
     write_sae_provenance,
-    write_run_history
+    write_run_history,
+    write_json_atomic,
 )
 from mas_sae.experiments.reproducibility import seed_everything
 from mas_sae.sae.hyperparamters import Hyperparameters as HP
 from mas_sae.sae.sparse_autoencoder import SparseAutoencoder as SAE
 from mas_sae.sae.dataloader import ActivationDataset, create_sae_dataloader
 from mas_sae.sae.model_runner import ModelRunner
-from mas_sae.sae.callbacks.checkpointing import CheckpointEvaluatorCallback
+from mas_sae.sae.callbacks.checkpointing import CheckpointEvaluatorCallback, load_sae_checkpoint
 from mas_sae.sae.callbacks.early_stopping import EarlyStoppingCallback
 
 
@@ -30,6 +39,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-name", type=str, required=True)
     parser.add_argument("--layer", type=int, required=True)
+    parser.add_argument("--sparsity-mode", choices=["topk", "l1"], default="l1")
+    parser.add_argument("--top-k", type=int, default=None)
     args = parser.parse_args()
 
     ACTIVATION_LOCATION = (
@@ -44,6 +55,13 @@ def main():
     subdirectories = ("checkpoints",)
     
     hp = HP()
+    hp.sparsity_mode = args.sparsity_mode
+    if args.top_k is not None:
+        hp.top_k = args.top_k
+    if hp.sparsity_mode == "topk" and (
+        hp.top_k is None or not 1 <= hp.top_k <= hp.latent_dim
+    ):
+        parser.error(f"TopK requires 1 <= top_k <= {hp.latent_dim}.")
     seed_everything(hp.seed)
     
     git_provenance = get_git_provenance()
@@ -104,6 +122,8 @@ def main():
             input_dim=hp.input_dim,
             hidden_dim=hp.hidden_dim,
             latent_dim=hp.latent_dim,
+            sparsity_mode=hp.sparsity_mode,
+            top_k=hp.top_k,
         ).to(device)
         
         assert isinstance(train_dataloader.dataset, ActivationDataset)
@@ -123,8 +143,23 @@ def main():
             "decoder_output": "Multiply reconstruction by the training RMS to restore original units.",
             "decoder_normalization": "Unit L2 norm per column at initialization and after each optimizer step.",
             "reconstruction_loss": "Mean squared error in RMS-normalized units over examples and input dimensions.",
-            "sparsity_loss": "Mean absolute latent activation over examples and features.",
-            "total_loss": "reconstruction_loss + sparsity_coefficient * sparsity_loss",
+            "sparsity_loss": (
+                "Mean absolute latent activation over examples and features."
+                if hp.sparsity_mode == "l1" else
+                "Not applied; weighted_sparsity_loss is recorded as zero for compatibility."
+            ),
+            "total_loss": (
+                "reconstruction_loss + sparsity_coefficient * sparsity_loss"
+                if hp.sparsity_mode == "l1" else "reconstruction_loss"
+            ),
+            "selection_metric": "val_loss",
+            "variance_explained": "1 - reconstruction SSE / SSE around the training-mean activation; null if baseline SSE is zero.",
+            "persistent_inactivity": "No positive activation in the last inactivity_window_examples training examples; null until that many examples have been observed. Evaluations do not update counters.",
+            "firing_frequencies": "Fraction of examples with positive activation per feature; percentiles include unused features.",
+            "sparsity_mechanism": (
+                "L1 activation penalty" if hp.sparsity_mode == "l1" else
+                "Per-example TopK of nonnegative encoder activations."
+            ),
         })
         write_run_config(run_directory, config)
         
@@ -136,7 +171,11 @@ def main():
             factor=0.1,
         )
         
-        runner = ModelRunner(model, sparsity_coefficient=hp.sparsity_coefficient, optimizer=optimizer)
+        runner = ModelRunner(
+            model, sparsity_coefficient=hp.sparsity_coefficient, optimizer=optimizer,
+            training_mean=train_activations.float().mean(dim=0),
+            inactivity_window_examples=hp.inactivity_window_examples,
+        )
         
         checkpoint_evaluator = CheckpointEvaluatorCallback(run_directory / "checkpoints")
         early_stopping = EarlyStoppingCallback(hp.patience)
@@ -151,21 +190,15 @@ def main():
             scheduler.step(val_metrics["loss"])
             checkpoint_evaluator.on_validation_end(train_metrics, val_metrics, epoch,
                                                    model, optimizer, scheduler)
-            epoch_history.append({
-                "epoch": epoch+1,
-                "learning_rate": optimizer.param_groups[0]["lr"],  # After scheduler.step(); used for the next epoch.
-                "train_loss": train_metrics["loss"],
-                "val_loss": val_metrics["loss"],
-                "train_rec_loss": train_metrics["rec_loss"],
-                "val_rec_loss": val_metrics["rec_loss"],
-                "train_weighted_sparsity_loss": train_metrics["weighted_sparsity_loss"],
-                "train_mean_active_features": train_metrics["mean_active_features"],
-                "val_mean_active_features": val_metrics["mean_active_features"],
-                "val_weighted_sparsity_loss": val_metrics["weighted_sparsity_loss"],
-                "train_inactive_feature_fraction": train_metrics["inactive_feature_fraction"],
-                "val_inactive_feature_fraction": val_metrics["inactive_feature_fraction"],
-                })
-            
+            epoch_metrics = {
+                "epoch": epoch + 1,
+                # After scheduler.step(); used for the next epoch.
+                "learning_rate": optimizer.param_groups[0]["lr"],
+            }
+            for prefix, metrics in (("train", train_metrics), ("val", val_metrics)):
+                epoch_metrics.update({f"{prefix}_{key}": value for key, value in metrics.items()})
+            epoch_history.append(epoch_metrics)
+
             write_run_history(run_directory, epoch_history)
             
             if early_stopping.on_validation_end(val_metrics["loss"]):
@@ -173,32 +206,49 @@ def main():
                 print(f"Early stopping after epoch {epoch+1}")
                 break
         
-        test_metrics = None
+        model = load_sae_checkpoint(
+            run_directory / "checkpoints" / "best_checkpoint.pt", device=device,
+        )
+        runner.model = model
+        # Use identical frozen weights for every split; no training-state updates.
+        frozen_metrics = {}
+        feature_frequencies = {}
+        evaluation_loaders = {"train": train_dataloader, "validation": val_dataloader}
         if test_dataloader is not None:
-            checkpoint = torch.load(
-                run_directory / "checkpoints" / "best_checkpoint.pt",
-                map_location=device,
-                weights_only=True,
-            )
-            model.load_state_dict(checkpoint["model_state_dict"])
-            test_metrics = runner.test(test_dataloader)
+            evaluation_loaders["test"] = test_dataloader
+        for split, dataloader in evaluation_loaders.items():
+            frozen_metrics[split] = runner.val_epoch(dataloader)
+            frequencies = runner.last_feature_frequencies
+            if frequencies is None:
+                raise RuntimeError(f"Evaluation did not produce feature frequencies for {split}.")
+            feature_frequencies[split] = frequencies.tolist()
+        test_metrics = frozen_metrics.get("test")
+        if test_metrics is not None:
             print(f"Test Loss: {test_metrics['loss']:.4f}")
-        
+
         best_epoch_metrics = min(epoch_history, key=lambda metrics: metrics["val_loss"])
                             
         summary = {
+            "sparsity_mode": hp.sparsity_mode,
+            "top_k": hp.top_k,
+            "total_loss": config["total_loss"],
             "epochs_completed": len(epoch_history),
             "stop_reason": stop_reason,
             "best_epoch": best_epoch_metrics["epoch"],
-            "best_val_metrics":
-                {
-                    "loss": best_epoch_metrics["val_loss"],
-                    "rec_loss": best_epoch_metrics["val_rec_loss"],
-                    "weighted_sparsity_loss": best_epoch_metrics["val_weighted_sparsity_loss"],
-                    "mean_active_features": best_epoch_metrics["val_mean_active_features"],
-                    "inactive_feature_fraction": best_epoch_metrics["val_inactive_feature_fraction"],
-                }
+            "frozen_checkpoint_metrics": frozen_metrics,
+            "feature_frequencies_path": "feature_frequencies.json",
+            "best_val_metrics": {
+                key.removeprefix("val_"): value
+                for key, value in best_epoch_metrics.items() if key.startswith("val_")
+            },
         }
+
+        write_json_atomic(run_directory / "feature_frequencies.json", {
+            "checkpoint": "checkpoints/best_checkpoint.pt",
+            "epoch": best_epoch_metrics["epoch"],
+            "definition": "Fraction of split examples with a positive activation; array index is latent feature index.",
+            "frequencies": feature_frequencies,
+        })
 
         write_run_history(
             run_directory,

@@ -9,6 +9,40 @@ HIDDEN_DIM = 6
 LATENT_DIM = 12
 
 
+@pytest.mark.parametrize("shape", [(3, INPUT_DIM), (2, 3, INPUT_DIM)])
+def test_topk_selects_largest_positive_features_per_example(shape):
+    model = SparseAutoencoder(INPUT_DIM, HIDDEN_DIM, LATENT_DIM, "topk", 3)
+    x = torch.randn(shape)
+    raw = model.encoder_layer(x / model.input_scale)
+    expected = raw.clone()
+    cutoff_indices = raw.topk(LATENT_DIM - 3, largest=False, dim=-1).indices
+    expected.scatter_(-1, cutoff_indices, 0)
+    actual = model.encoder(x)
+    assert actual.shape == raw.shape
+    assert torch.equal(actual, expected)
+    assert ((actual > 0).sum(dim=-1) <= 3).all()
+    model(x)[1].square().mean().backward()
+    assert model.encoder_layer[0].weight.grad is not None
+    assert torch.isfinite(model.encoder_layer[0].weight.grad).all()
+
+
+@pytest.mark.parametrize("k", [None, 0, -1, LATENT_DIM + 1, 2.5, True])
+def test_topk_rejects_invalid_k(k):
+    with pytest.raises(ValueError, match="top_k"):
+        SparseAutoencoder(INPUT_DIM, HIDDEN_DIM, LATENT_DIM, "topk", k)
+
+
+def test_invalid_sparsity_mode():
+    with pytest.raises(ValueError, match="sparsity_mode"):
+        SparseAutoencoder(INPUT_DIM, HIDDEN_DIM, LATENT_DIM, "invalid")
+
+
+def test_topk_full_dictionary_matches_l1():
+    model = SparseAutoencoder(INPUT_DIM, HIDDEN_DIM, LATENT_DIM, "topk", LATENT_DIM)
+    x = torch.randn(3, INPUT_DIM)
+    assert torch.equal(model.encoder(x), model.encoder_layer(x / model.input_scale))
+
+
 @pytest.fixture
 def model() -> SparseAutoencoder:
     torch.manual_seed(0)

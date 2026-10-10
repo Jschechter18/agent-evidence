@@ -16,4 +16,7 @@ class Hyperparameters:
     patience: int = 20
     lr_patience: int = 5
 
+    sparsity_mode: str = "l1"
+    top_k: int | None = 512
     sparsity_coefficient: float = 0.1
+    inactivity_window_examples: int = 10000

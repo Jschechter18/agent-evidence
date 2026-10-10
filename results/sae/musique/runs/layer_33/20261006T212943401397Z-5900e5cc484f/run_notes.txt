@@ -1,7 +1,0 @@
-General notes:
-    - initial healthy-ish looking training run
-
-Interpretation to record:
-    - good validation reconstruction, but a relatively dense representation and substantial unused dictionary capacity. Validation reconstruction error is approximately 18× training error, showing a pronounced generalization gap. These metrics do not establish feature interpretability.
-
-    

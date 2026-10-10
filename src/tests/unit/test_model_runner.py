@@ -12,6 +12,45 @@ from mas_sae.sae.model_runner import ModelRunner
 from mas_sae.sae.sparse_autoencoder import SparseAutoencoder
 
 
+@pytest.mark.parametrize("runner_method", ["train_epoch", "val_epoch", "test"])
+def test_topk_metrics_record_zero_l1_and_reconstruction_objective(runner_method):
+    model = SparseAutoencoder(4, 8, 6, "topk", 2)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    runner = ModelRunner(model, sparsity_coefficient=100.0, optimizer=optimizer)
+    metrics = getattr(runner, runner_method)(DataLoader(torch.randn(5, 4), batch_size=2))
+    assert metrics["weighted_sparsity_loss"] == 0.0
+    assert metrics["loss"] == metrics["rec_loss"]
+    assert metrics["mean_active_features"] <= 2
+    assert json.loads(json.dumps(metrics))["weighted_sparsity_loss"] == 0.0
+
+
+def test_diagnostics_use_training_mean_and_exact_example_window():
+    model = TrackingModel()
+    runner = ModelRunner(model, 0.0, torch.optim.SGD(model.parameters(), lr=0.0),
+                         training_mean=torch.tensor([1.0, 1.0]), inactivity_window_examples=4)
+    first = DataLoader(torch.tensor([[2., 0.], [0., 0.]]), batch_size=1)
+    metrics = runner.train_epoch(first)
+    assert metrics["persistent_inactive_feature_fraction"] is None
+    assert metrics["variance_explained"] == pytest.approx(0.75)
+    assert runner.last_feature_frequencies.tolist() == [0.5, 0.0]
+    assert metrics["firing_frequency_p50"] == pytest.approx(0.25)
+    runner.val_epoch(DataLoader(torch.tensor([[0., 2.]]), batch_size=1))
+    assert runner.training_examples_seen == 2
+    assert runner.last_fired_example.tolist() == [1, 0]
+    metrics = runner.train_epoch(first)
+    assert metrics["persistent_inactive_feature_fraction"] == 0.5
+    assert runner.last_fired_example.tolist() == [3, 0]
+
+
+def test_variance_explained_undefined_for_zero_baseline():
+    model = TrackingModel()
+    runner = ModelRunner(model, 0.0, Mock(), training_mean=torch.ones(2))
+    metrics = runner.val_epoch(DataLoader(torch.ones(2, 2), batch_size=1))
+    assert metrics["mean_baseline_rec_loss"] == 0.0
+    assert metrics["variance_explained"] is None
+    assert json.loads(json.dumps(metrics))["variance_explained"] is None
+
+
 class TrackingModel(nn.Module):
     """Small deterministic model that records the context of each forward pass."""
 
@@ -20,6 +59,7 @@ class TrackingModel(nn.Module):
         self.scale = nn.Parameter(torch.tensor(0.5))
         self.register_buffer("input_scale", torch.tensor(1.0))
         self.latent_dim = 2
+        self.sparsity_mode = "l1"
         self.normalization_calls = 0
         self.training_states: list[bool] = []
         self.grad_states: list[bool] = []
@@ -60,7 +100,7 @@ def disable_progress_bar(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_loss_fn_combines_reconstruction_and_weighted_sparsity_losses() -> None:
     runner = ModelRunner(
-        model=Mock(input_scale=torch.tensor(2.0)),
+        model=Mock(input_scale=torch.tensor(2.0), sparsity_mode="l1"),
         sparsity_coefficient=0.25,
         optimizer=Mock(),
     )
@@ -80,7 +120,7 @@ def test_common_passes_batch_to_model_and_returns_outputs() -> None:
     batch = torch.randn(3, 4)
     sparse_features = torch.randn(3, 6)
     reconstructed = torch.randn(3, 4)
-    model = Mock(return_value=(sparse_features, reconstructed), input_scale=torch.tensor(1.0))
+    model = Mock(return_value=(sparse_features, reconstructed), input_scale=torch.tensor(1.0), sparsity_mode="l1")
     model.parameters.return_value = iter([nn.Parameter(torch.zeros(1))])
     runner = ModelRunner(model=model, sparsity_coefficient=0.1, optimizer=Mock())
 
@@ -112,7 +152,7 @@ def test_train_epoch_enables_training_and_updates_model_for_every_batch() -> Non
     assert optimizer.zero_grad_calls == len(dataloader)
     assert optimizer.step_calls == len(dataloader)
     assert not torch.equal(model.scale.detach(), initial_scale)
-    assert all(isinstance(value, float) for value in metrics.values())
+    assert all(value is None or isinstance(value, (float, int)) for value in metrics.values())
     assert metrics["loss"] >= 0
     assert model.normalization_calls == len(dataloader)
     assert metrics["loss"] == pytest.approx(metrics["rec_loss"] + metrics["weighted_sparsity_loss"])
@@ -167,7 +207,7 @@ def test_cpu_batches_run_on_model_device(device: str, runner_method: str) -> Non
 
     metrics = getattr(runner, runner_method)(dataloader)
 
-    assert all(torch.isfinite(torch.tensor(value)) for value in metrics.values())
+    assert all(torch.isfinite(torch.tensor(value)) for value in metrics.values() if value is not None)
     assert torch.allclose(
         model.decoder_layer[0].weight.norm(dim=0),
         torch.ones(model.latent_dim, device=device),
@@ -206,7 +246,7 @@ def test_empty_dataset_raises(runner_method: str) -> None:
 
 
 def test_zero_features_do_not_erase_reconstruction_loss() -> None:
-    model = Mock(input_scale=torch.tensor(1.0))
+    model = Mock(input_scale=torch.tensor(1.0), sparsity_mode="l1")
     runner = ModelRunner(model, 0.1, Mock())
     losses = runner._loss_fn(torch.zeros(2, 2), torch.ones(2, 2), torch.zeros(2, 3))
     assert losses["weighted_sparsity_loss"].item() == 0.0

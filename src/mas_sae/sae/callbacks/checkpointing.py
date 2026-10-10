@@ -1,5 +1,36 @@
 import torch
+import json
 from pathlib import Path
+from mas_sae.sae.sparse_autoencoder import SparseAutoencoder
+
+
+def load_sae_checkpoint(
+    checkpoint_path: str | Path,
+    device: str | torch.device = "cpu",
+) -> SparseAutoencoder:
+    """Restore an SAE for inference, including its sparsity mode and RMS scale.
+
+    Legacy checkpoints require their run's adjacent config.json. Optimizer and
+    scheduler restoration is intentionally left to training-resume callers.
+    """
+    checkpoint_path = Path(checkpoint_path)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    config = checkpoint.get("model_config")
+    if config is None:
+        config_path = checkpoint_path.parent.parent / "config.json"
+        if not config_path.is_file():
+            raise ValueError("Checkpoint lacks model_config and adjacent run config.json.")
+        config = json.loads(config_path.read_text())
+    model = SparseAutoencoder(
+        input_dim=config["input_dim"],
+        hidden_dim=config["hidden_dim"],
+        latent_dim=config["latent_dim"],
+        sparsity_mode=config.get("sparsity_mode", config.get("sparcity_mode", "l1")),
+        top_k=config.get("top_k"),
+    ).to(device)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+    return model
 
 class CheckpointEvaluatorCallback:
     def __init__(self, checkpoint_dir: Path):
@@ -36,4 +67,12 @@ class CheckpointEvaluatorCallback:
                 'best_loss': self.best_loss,
                 'scheduler_state_dict': scheduler.state_dict()
             }
+            if isinstance(model, SparseAutoencoder):
+                checkpoint['model_config'] = {
+                    'input_dim': model.input_dim,
+                    'hidden_dim': model.hidden_dim,
+                    'latent_dim': model.latent_dim,
+                    'sparsity_mode': model.sparsity_mode,
+                    'top_k': model.top_k,
+                }
             torch.save(checkpoint, self.checkpoint_dir / "best_checkpoint.pt")
