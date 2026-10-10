@@ -1,0 +1,30 @@
+{
+  "run_id": "20261010T141550349911Z-9047dc7c918b",
+  "run_name": "sae-l12888",
+  "layer": 33,
+  "created_at": "2026-10-10T14:15:50.349911+00:00",
+  "git_commit": "9047dc7c918bebc0d1aca60793f60b45c26fe11b",
+  "command": "/home/ubuntu/miniconda3/envs/capstone/bin/python scripts/train_sae.py --run-name natural_4b_partitioned --layer 33 --sparsity-mode topk --top-k 512",
+  "status": "completed",
+  "error_message": "",
+  "git_dirty": false,
+  "git_status": "",
+  "git_diff": "",
+  "git_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "git_diff_scope": "Staged and unstaged tracked changes relative to HEAD; untracked contents excluded.",
+  "activation_files": {
+    "train": {
+      "path": "/home/ubuntu/capstone/fall-2026-group3/data/activations/natural_4b_partitioned/layer_33/train.pt",
+      "sha256": "064aef25bb43a08ffecb23480557d726b48f49e824a9c130cdd06b2365c6b646"
+    },
+    "validation": {
+      "path": "/home/ubuntu/capstone/fall-2026-group3/data/activations/natural_4b_partitioned/layer_33/validation.pt",
+      "sha256": "98a3f60ffe5b53af749a376612810b265b5f1e65dca6e50b3045cda70f0d11ee"
+    },
+    "test": {
+      "path": "/home/ubuntu/capstone/fall-2026-group3/data/activations/natural_4b_partitioned/layer_33/test.pt",
+      "sha256": "cf315ec25d3e6a4c29be939d8ff086f9b12b7c935a1e7bc6f79945a7045fe804"
+    }
+  },
+  "updated_at": "2026-10-10T14:34:59.956804+00:00"
+}
