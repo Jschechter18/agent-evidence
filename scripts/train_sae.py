@@ -1,6 +1,6 @@
 """
 python scripts/train_sae.py \
-  --run-name natural_4b_layer_scan_partitioned \
+  --run-name natural_4b_partitioned \
   --layer 33 \
   --sparsity-mode topk \
   --top-k 512
