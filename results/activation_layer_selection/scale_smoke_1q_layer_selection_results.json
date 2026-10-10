@@ -1,0 +1,28 @@
+{
+  "run_name": "scale_smoke_1q",
+  "results_by_layer": {
+    "layer_08": {
+      "auroc": 0.5,
+      "balanced_accuracy": 0.5
+    },
+    "layer_17": {
+      "auroc": 0.5,
+      "balanced_accuracy": 0.5
+    },
+    "layer_25": {
+      "auroc": 0.5,
+      "balanced_accuracy": 0.5
+    },
+    "layer_33": {
+      "auroc": 0.5,
+      "balanced_accuracy": 0.5
+    }
+  },
+  "ranked_layers": [
+    "layer_08",
+    "layer_17",
+    "layer_25",
+    "layer_33"
+  ],
+  "recommended_layer": "layer_08"
+}

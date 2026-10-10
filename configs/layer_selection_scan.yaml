@@ -1,0 +1,19 @@
+# Layer selection on the nine-layer SCAN. Its validation slice alone is far too small to rank nine layers
+# (roughly 75 eligible rows, ~8 non-adopters), so use question-grouped CV over train+validation.
+# test and intervention rows are never read.
+capstone_data_root: data/capstone-data
+activations_dir: natural_4b_layer_scan/data/activations/natural_4b_layer_scan
+results_dir: natural_4b_layer_scan/results/collection/natural_4b_layer_scan
+labels_csv: behavior_v011_split80_10_10_20261006/labels.csv
+manifest_csv: behavior_v011_split80_10_10_20261006/split_manifest.csv
+index_column: scan_index
+layers: [8, 12, 17, 21, 25, 28, 30, 31, 33]
+protocol: cv
+n_folds: 5
+text_fields: [solver_attempt_1, critic_advocated_answer, critic_feedback]
+seed: 42
+c_grid: [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+inner_folds: 3
+n_bootstrap: 1000
+n_permutations: 0
+output_dir: results/layer_selection_scan

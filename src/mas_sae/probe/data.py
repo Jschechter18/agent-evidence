@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import numpy as np
-import torch
+import torch 
+
 
 from mas_sae.sae.sparse_autoencoder import SparseAutoencoder
 
@@ -39,3 +40,4 @@ def make_sample_labels(
     logit = logit - logit.mean()
     prob = 1 / (1 + np.exp(-logit))
     return (rng.random(sparse_features.shape[0]) < prob).astype(int)
+
