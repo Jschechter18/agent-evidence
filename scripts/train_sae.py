@@ -7,7 +7,7 @@ python scripts/train_sae.py \
   
 python scripts/train_sae.py \
   --run-name natural_4b_partitioned \
-  --layer 33 \
+  --layer 33
 """
 
 import argparse
