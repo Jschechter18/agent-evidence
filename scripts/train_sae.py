@@ -4,6 +4,10 @@ python scripts/train_sae.py \
   --layer 33 \
   --sparsity-mode topk \
   --top-k 512
+  
+python scripts/train_sae.py \
+  --run-name natural_4b_partitioned \
+  --layer 33 \
 """
 
 import argparse
